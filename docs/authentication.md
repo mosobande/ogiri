@@ -1,241 +1,56 @@
-# Authentication Flow
+# Authentication
 
-How ogiri authenticates requests, rotates tokens, and manages headers.
+## Request flow
 
-## Request Lifecycle
+1. A Spring Security `AuthenticationConverter` extracts exactly one configured credential transport.
+2. `OgiriSessionAuthenticationProvider` decodes the opaque selector, loads an immutable committed session snapshot, constant-time verifies the keyed digest, checks expiry/revocation, and runs `SubjectStatusChecker`.
+3. The provider creates `OgiriSessionPrincipal` containing stable session ID, subject, realm, tenant, client, family, and version. It never retains the verifier.
+4. Authorization executes in the same selected `SecurityFilterChain`.
 
-```
-Request → Filter → Bypass Check → Header Extraction → Token Validation → Rotation → Response
-```
+Missing credentials do not authenticate a request; authorization still rejects protected routes. Malformed or invalid credentials produce a stable RFC 9457 response with `401`, `WWW-Authenticate`, and `Cache-Control: no-store`.
 
-### 1. Filter Entry
+## Issuance
 
-`OgiriTokenAuthenticationFilter.doFilterInternal()` intercepts every request.
+The optional sign-in endpoint first delegates username/password or another credential to the application's `AuthenticationManager`. Only an already-authenticated Spring `Authentication` is converted to a session subject. The store transaction returns before the HTTP adapter writes a header or cookie, so rollback and commit failures cannot leak an unusable credential.
 
-### 2. Bypass Check
-
-`AuthenticationBypassDecider.canSkip()` returns `true` for:
-
-- Already authenticated users (SecurityContext populated)
-- Public routes declared in `OgiriRouteRegistry`
-- CORS preflight requests (OPTIONS method)
-- Health and docs paths (`/health`, `/actuator/**`, `/swagger-ui/**`)
-
-### 3. Header Extraction
-
-`AuthHeader.extractAuthHeader()` parses authentication from:
-
-**Individual headers (preferred):**
-
-```
-access-token: <token-hash>
-client: web
-uid: 123
-expiry: 2025-12-25T00:00:00Z
-```
-
-**Bearer token (fallback):**
-
-```
-Authorization: Bearer eyJhY2Nlc3MtdG9rZW4iOiJ4eXoiLCJjbGllbnQiOiJ3ZWIiLCJ1aWQiOiIxMjMiLCJleHBpcnkiOiIyMDI1LTEyLTI1In0=
-```
-
-The Bearer token decodes to:
-
-```json
-{
-  "access-token": "xyz",
-  "client": "web",
-  "uid": "123",
-  "expiry": "2025-12-25"
-}
-```
-
-### 4. Token Validation
-
-`OgiriTokenService.validToken()` verifies:
-
-1. Token hash matches database record
-2. Token is not expired
-3. Grace period tokens (`lastToken`, `previousToken`) are accepted during rotation
-
-### 5. Token Rotation
-
-Based on configuration:
-
-| Condition                            | Action                                   |
-| ------------------------------------ | ---------------------------------------- |
-| Within batch grace window            | Update `lastUsedAt` only, no new headers |
-| Outside batch window                 | Rotate token, emit new headers           |
-| `rotate-on-write-only=true`          | Only rotate on POST/PUT/DELETE           |
-| Token exceeds `rotate-stale-seconds` | Force rotation                           |
-
-### 6. Response
-
-On success:
-
-- `SecurityContext` populated with authenticated user
-- New auth headers appended (if rotated)
-
-On failure:
-
-- `SecurityContext` cleared
-- `AuthenticationEntryPoint` returns error response
-
-## Token Rotation
-
-### Batch Window
-
-Prevents token thrashing from rapid requests:
-
-```yaml
-ogiri:
-  auth:
-    batch-grace-seconds: 5 # Requests within 5s share same token
-```
-
-Within the window, only `lastUsedAt` is updated.
-
-### Staleness Rotation
-
-Force rotation after a time period:
-
-```yaml
-ogiri:
-  auth:
-    rotate-stale-seconds: 3600 # Rotate tokens older than 1 hour
-```
-
-### Write-Only Rotation
-
-Only rotate on mutating requests:
-
-```yaml
-ogiri:
-  auth:
-    rotate-on-write-only: true # GET requests don't rotate
-```
-
-## Headers
-
-### Request Headers
-
-Clients send these on authenticated requests:
-
-| Header         | Description                               |
-| -------------- | ----------------------------------------- |
-| `access-token` | Token hash                                |
-| `client`       | Client identifier (e.g., "web", "mobile") |
-| `uid`          | User identifier                           |
-| `expiry`       | Token expiration (ISO-8601)               |
-
-Or use a single Bearer header containing Base64-encoded JSON.
-
-### Response Headers
-
-After login or rotation:
-
-| Header         | Description                             |
-| -------------- | --------------------------------------- |
-| `access-token` | New token hash                          |
-| `client`       | Client identifier                       |
-| `uid`          | User identifier                         |
-| `expiry`       | New expiration                          |
-| `sub-tokens`   | Base64-encoded sub-token map (optional) |
-
-### Sub-Token Header
-
-When sub-tokens are issued:
-
-```
-sub-tokens: eyJkZXZp******************MFoifX0=
-```
-
-Decodes to:
-
-```json
-{
-  "device": {
-    "client": "app.device",
-    "token": "abc123",
-    "expiry": "2025-12-25T00:00:00Z"
-  }
-}
-```
-
-## Route Registry
-
-Declare unauthenticated routes:
+Applications that own endpoints call the same seam:
 
 ```kotlin
-@Component
-class MyRouteRegistry : OgiriRouteRegistry {
-  override fun routes() = listOf(
-    OgiriRoute.get("/public/**"),
-    OgiriRoute.post("/api/auth/login"),
-    OgiriRoute.post("/api/auth/register"),
-    OgiriRoute.get("/health"),
-    OgiriRoute.get("/api/docs/**")
-  )
-}
+val authenticated = authenticationManager.authenticate(loginRequest)
+val subject = subjectResolver.resolve(authenticated)
+val issued = sessions.issue(subject, clientContext)
+responseWriter.writeCredential(response, issued)
 ```
 
-Routes support wildcards:
+## Rotation
 
-- `*` matches single path segment
-- `**` matches multiple path segments
+Rotation is a compare-and-swap command over stable session ID, expected version, and expected current digest. A successful command:
 
-## Error Handling
+- moves the current digest to the single previous slot;
+- sets one immutable `previousValidUntil`;
+- stores the successor digest;
+- increments the record version; and
+- returns the successor verifier only to the winning caller.
 
-Use `SecurityServiceException` for auth errors:
+A previous verifier may authenticate strictly before its fixed deadline but cannot rotate. At the deadline it fails and triggers reuse revocation. Activity updates modify only `lastUsedAt`; they cannot move credential deadlines.
 
-```kotlin
-throw SecurityServiceException("error.auth.invalid_token", "Token is invalid")
-```
+## Logout and session management
 
-Recommended error codes:
+Logout revokes the stable session ID carried by `OgiriSessionPrincipal`, not a re-comparison against whichever digest is currently stored. It is idempotent and emits no replacement credential. Cookie mode expires the configured cookie with matching attributes.
 
-- `error.auth.invalid_token`
-- `error.auth.expired_token`
-- `error.auth.missing_headers`
-- `error.auth.user_not_found`
+The endpoint starter can list active sessions, revoke one owned session, revoke all other sessions, or revoke all sessions through `SessionManager`. Responses expose labels and timestamps, never digests or verifiers.
 
-Handle in `@ControllerAdvice`:
+## Account state
 
-```kotlin
-@ExceptionHandler(SecurityServiceException::class)
-fun handleAuthError(ex: SecurityServiceException): ResponseEntity<*> {
-  return ResponseEntity
-    .status(HttpStatus.UNAUTHORIZED)
-    .body(mapOf("error" to ex.code, "message" to ex.message))
-}
-```
+`SubjectStatusChecker` runs during issuance and every session authentication. The default adapter uses Spring Security's `AccountStatusUserDetailsChecker`, covering disabled, locked, account-expired, and credentials-expired users. Applications with UUID/opaque IDs, multiple realms, password security versions, or external identity providers should supply their own checker.
 
-## Security Best Practices
+## Errors
 
-1. **Never log raw tokens** - Use `SecurityHelpers` for parsing
-2. **Register public routes** - Prevent accidental lockouts
-3. **Use SecurityServiceException** - Avoid leaking internal errors
-4. **Validate identifiers** - Use `IdentifierPolicy` before database queries
-
-## Testing
-
-Use in-memory fixtures for testing:
-
-```kotlin
-@Test
-fun `should authenticate valid token`() {
-  val token = tokenService.createNewAuthToken(userId, "test-client")
-
-  mockMvc.get("/api/protected") {
-    header("access-token", token.accessToken)
-    header("client", token.client)
-    header("uid", userId.toString())
-    header("expiry", token.expiry.toString())
-  }.andExpect {
-    status { isOk() }
-  }
-}
-```
-
-See `OgiriTokenAuthenticationFilterTest` for comprehensive examples.
+| Condition                         |  Status | Stable code                                |
+| --------------------------------- | ------: | ------------------------------------------ |
+| Malformed request/credential      | 400/401 | `malformed_request` / `invalid_credential` |
+| Subject not allowed               |     403 | `subject_unavailable`                      |
+| Concurrent rotation/session limit |     409 | `session_conflict` / `session_limit`       |
+| Validation failure                |     422 | `invalid_request`                          |
+| Distributed throttle              |     429 | `rate_limit_exceeded`                      |
+| Unexpected failure                |     500 | No internal exception message is exposed   |

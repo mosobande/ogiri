@@ -32,6 +32,7 @@ dependencyManagement {
 
 dependencies {
   api(project(":ogiri-core"))
+  api(project(":ogiri-session-core"))
   api("org.springframework.boot:spring-boot-starter-jdbc")
 
   testImplementation("org.springframework.boot:spring-boot-starter-test") {

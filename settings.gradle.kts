@@ -1,28 +1,12 @@
 rootProject.name = "ogiri"
 
-/*
- * Centralized version management.
- *
- * Version is read from .ogiri-version file (primary source of truth).
- * Version determination order (highest to lowest precedence):
- *   1. Environment variable RELEASE_VERSION (CI/CD overrides)
- *   2. Gradle property -PRELEASE_VERSION (local overrides)
- *   3. .ogiri-version file (main version)
- *   4. Default fallback: 1.0.2
- *
- * To update version:
- *   - Edit .ogiri-version file
- *   - Or override: RELEASE_VERSION=1.0.X gradle build
- *   - Or use: scripts/release.sh (creates tag and pushes to GitHub)
- */
-val versionFile = File(settingsDir, ".ogiri-version")
-val projectVersion =
-    System.getenv("RELEASE_VERSION")?.takeIf { it.isNotBlank() }
-        ?: (System.getProperty("RELEASE_VERSION")?.takeIf { it.isNotBlank() })
-            ?: (if (versionFile.exists()) versionFile.readText().trim() else null)
-            ?: "0.0.0-SNAPSHOT"
-
 include(":ogiri-core")
+
+include(":ogiri-session-core")
+
+include(":ogiri-bom")
+
+include(":ogiri-test")
 
 include(":ogiri-jpa")
 
@@ -78,11 +62,11 @@ dependencyResolutionManagement {
       // Plugin versions
       version("kotlin", "2.1.20")
       version("spotless", "8.0.0")
-      version("springBoot", "3.5.7")
+      version("springBoot", "3.5.16")
       version("dependencyManagement", "1.1.7")
       version("versionsPlugin", "0.52.0")
-      version("caffeine", "3.2.3")
-      version("owasp", "12.1.9")
+      version("caffeine", "3.2.4")
+      version("owasp", "12.2.2")
       version("jacoco", "0.8.11")
     }
   }

@@ -1,1 +1,2 @@
 com.quantipixels.ogiri.security.redis.OgiriRedisAutoConfiguration
+com.quantipixels.ogiri.security.redis.OgiriRedisRateLimitAutoConfiguration

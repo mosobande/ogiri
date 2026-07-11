@@ -31,6 +31,12 @@ kotlin {
   jvmToolchain(17)
 }
 
+extra["jackson-bom.version"] = "2.21.5"
+
+extra["log4j2.version"] = "2.26.1"
+
+extra["tomcat.version"] = "10.1.57"
+
 dependencyManagement {
   imports {
     mavenBom("org.springframework.boot:spring-boot-dependencies:${libs.versions.springBoot.get()}")
@@ -38,6 +44,7 @@ dependencyManagement {
 }
 
 dependencies {
+  api(project(":ogiri-session-core"))
   api("org.springframework.boot:spring-boot-starter-security")
   api("org.springframework.boot:spring-boot-starter-web")
   api("org.springframework.boot:spring-boot-starter-validation")
@@ -52,20 +59,34 @@ dependencies {
   // Optional Spring Data dependency for @NoRepositoryBean annotation
   // Users who use Spring Data will have this at runtime
   compileOnly("org.springframework.data:spring-data-commons")
+  compileOnly("org.springframework.boot:spring-boot-starter-actuator")
   implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+  implementation("io.micrometer:micrometer-core")
   implementation("com.github.ben-manes.caffeine:caffeine:${libs.versions.caffeine.get()}")
 
   // Configuration processor for IDE autocomplete and property hints
   annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 
+  testImplementation(project(":ogiri-test"))
   testImplementation("org.springframework.boot:spring-boot-starter-test") {
     exclude(module = "mockito-core")
   }
+  testImplementation("org.springframework.security:spring-security-test")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
   testFixturesImplementation("org.springframework.boot:spring-boot-starter-test") {
     exclude(module = "mockito-core")
   }
+}
+
+dependencyCheck {
+  failBuildOnCVSS = 7.0F
+  suppressionFile = rootProject.file("config/dependency-check-suppressions.xml").path
+  failBuildOnUnusedSuppressionRule = true
+  scanConfigurations = listOf("runtimeClasspath")
+  analyzers.assemblyEnabled = false
+  analyzers.ossIndex.enabled = false
+  System.getenv("NVD_API_KEY")?.takeIf(String::isNotBlank)?.let { nvd.apiKey = it }
 }
 
 /**

@@ -14,15 +14,19 @@ package com.quantipixels.ogiri.security.redis
 
 import com.quantipixels.ogiri.security.config.OgiriConfigurationProperties
 import com.quantipixels.ogiri.security.config.OgiriLookupTypeCondition
+import com.quantipixels.ogiri.security.session.OgiriRateLimiter
+import com.quantipixels.ogiri.security.session.OgiriSessionProperties
 import com.quantipixels.ogiri.security.spi.OgiriTokenLookupCache
 import com.quantipixels.ogiri.security.tokens.OgiriToken
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Conditional
 import org.springframework.data.redis.connection.RedisConnectionFactory
 import org.springframework.data.redis.core.RedisTemplate
+import org.springframework.data.redis.core.StringRedisTemplate
 
 /**
  * Autoconfiguration for the Redis-backed [OgiriTokenLookupCache].
@@ -48,4 +52,20 @@ class OgiriRedisAutoConfiguration {
   ): OgiriTokenLookupCache<T> = RedisOgiriTokenLookupCache(connectionFactory, properties)
 
   internal class OnRedisType : OgiriLookupTypeCondition("redis")
+}
+
+@AutoConfiguration
+@ConditionalOnClass(StringRedisTemplate::class)
+@ConditionalOnProperty(
+    prefix = "ogiri.session.rate-limit",
+    name = ["enabled"],
+    havingValue = "true",
+)
+class OgiriRedisRateLimitAutoConfiguration {
+  @Bean
+  @ConditionalOnMissingBean(OgiriRateLimiter::class)
+  fun ogiriRedisRateLimiter(
+      redis: StringRedisTemplate,
+      properties: OgiriSessionProperties,
+  ): OgiriRateLimiter = OgiriRedisRateLimiter(redis, properties)
 }

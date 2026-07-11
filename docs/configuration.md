@@ -1,420 +1,83 @@
 # Configuration
 
-All ogiri properties are prefixed with `ogiri`.
-
-## Properties Reference
-
-### Security Filter
-
-| Property                         | Default | Description                       |
-| -------------------------------- | ------- | --------------------------------- |
-| `ogiri.security.register-filter` | `true`  | Auto-register SecurityFilterChain |
-
-### Token Behavior
-
-| Property                            | Default | Description                                     |
-| ----------------------------------- | ------- | ----------------------------------------------- |
-| `ogiri.auth.max-clients`            | `10`    | Max active tokens per user                      |
-| `ogiri.auth.batch-grace-seconds`    | `5`     | Grace period before rotation                    |
-| `ogiri.auth.token-lifespan-days`    | `14`    | Token lifetime in days                          |
-| `ogiri.auth.max-bearer-token-size`  | `8192`  | Max bearer token size in bytes (DoS protection) |
-| `ogiri.auth.register-token-service` | `true`  | Auto-register default OgiriTokenService         |
-
-### Token Rotation
-
-| Property                          | Default | Description                                   |
-| --------------------------------- | ------- | --------------------------------------------- |
-| `ogiri.auth.rotate-on-write-only` | `false` | Only rotate on POST/PUT/DELETE                |
-| `ogiri.auth.rotate-stale-seconds` | `3600`  | Force rotation after N seconds (0 = disabled) |
-
-### Token Cleanup
-
-| Property                    | Default    | Description                                           |
-| --------------------------- | ---------- | ----------------------------------------------------- |
-| `ogiri.cleanup.enabled`     | `true`     | Enable scheduled cleanup job                          |
-| `ogiri.cleanup.interval-ms` | `21600000` | Cleanup interval in milliseconds (default: 6 hours)   |
-| `ogiri.cleanup.batch-size`  | `1000`     | Tokens deleted per batch (large dataset optimization) |
-
-### Cookie Configuration
-
-| Property                  | Default  | Description                          |
-| ------------------------- | -------- | ------------------------------------ |
-| `ogiri.cookies.enabled`   | `true`   | Enable auth cookies                  |
-| `ogiri.cookies.secure`    | `true`   | Require HTTPS (WARN if false)        |
-| `ogiri.cookies.http-only` | `true`   | Prevent JS access (WARN if false)    |
-| `ogiri.cookies.same-site` | `Strict` | SameSite attribute (Strict/Lax/None) |
-| `ogiri.cookies.path`      | `"/"`    | Cookie path                          |
-
-### BCrypt Comparison Cache
-
-Caches the result of BCrypt comparisons to avoid repeated hashing for the same token.
-
-| Property                               | Default              | Description                                                               |
-| -------------------------------------- | -------------------- | ------------------------------------------------------------------------- |
-| `ogiri.cache.max-size`                 | `10000`              | Max cached token comparisons                                              |
-| `ogiri.cache.expiry-minutes`           | `60`                 | Cache entry TTL in minutes                                                |
-| `ogiri.cache.use-spring-cache-manager` | `false`              | Bridge an existing `CacheManager` bean as the token lookup cache (Tier 2) |
-| `ogiri.cache.cache-name`               | `ogiri-token-lookup` | Name of the Spring cache to use when `use-spring-cache-manager` is `true` |
-
-### Token Lookup Cache
-
-Caches full token entities to eliminate repeated DB reads on every authenticated request.
-Disabled by default. Requires `ogiri-caffeine` or `ogiri-redis` on the classpath.
-
-| Property                      | Default | Description                                                             |
-| ----------------------------- | ------- | ----------------------------------------------------------------------- |
-| `ogiri.lookup.type`           | (none)  | `caffeine` or `redis` (case-insensitive) — absent means no lookup cache |
-| `ogiri.lookup.max-size`       | `10000` | Max cached entities (Caffeine only)                                     |
-| `ogiri.lookup.expiry-minutes` | `5`     | Cache entry TTL in minutes (both Caffeine and Redis)                    |
-
-## Token Lookup Cache
-
-Every authenticated request calls `getByUserIdAndClient()` — a DB read — to load the token entity.
-For high-traffic apps with polling endpoints, this adds up. The token lookup cache eliminates that
-read for the same user/client within the configured TTL window.
-
-### Choosing a Backend
-
-| Option                         | How to activate                              | Best for                                                                                              |
-| ------------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `ogiri-caffeine`               | `ogiri.lookup.type: caffeine`                | Single-instance deployments, zero infrastructure                                                      |
-| `ogiri-redis`                  | `ogiri.lookup.type: redis`                   | Multi-instance / containerised deployments                                                            |
-| Spring CacheManager bridge     | `ogiri.cache.use-spring-cache-manager: true` | Apps that already have a `CacheManager` (Ehcache, Hazelcast, etc.) and don't want an extra dependency |
-| Custom `OgiriTokenLookupCache` | Provide a `@Bean`                            | Full control — required when `evictAll` must work immediately                                         |
-| (none)                         | (absent)                                     | Default: every request hits the database                                                              |
-
-Priority when multiple options are available: custom bean → `ogiri-caffeine`/`ogiri-redis` → Spring CacheManager bridge. The first registered bean wins; the rest are suppressed by `@ConditionalOnMissingBean`.
-
-!!! warning "Multi-instance deployments"
-Caffeine is **per-JVM**. If you run multiple application instances, token revocations
-on one node are not visible to others until the cache entry expires. Use `ogiri-redis`
-when running more than one instance.
-
-### ogiri-caffeine
-
-Add the dependency (Caffeine is included, no extra peer dep needed):
-
-=== "Gradle (Kotlin DSL)"
-
-    ```kotlin
-    implementation("com.quantipixels.ogiri:ogiri-caffeine:{{ config.extra.ogiri_version }}")
-    ```
-
-=== "Gradle (Groovy)"
-
-    ```groovy
-    implementation 'com.quantipixels.ogiri:ogiri-caffeine:{{ config.extra.ogiri_version }}'
-    ```
-
-=== "Maven"
-
-    ```xml
-    <dependency>
-      <groupId>com.quantipixels.ogiri</groupId>
-      <artifactId>ogiri-caffeine</artifactId>
-      <version>{{ config.extra.ogiri_version }}</version>
-    </dependency>
-    ```
-
-Activate in `application.yml`:
+Ogiri v4 is opt-in with `ogiri.session.enabled=true`. Invalid security combinations fail application startup.
 
 ```yaml
 ogiri:
-  lookup:
-    type: caffeine
-    max-size: 10000
-    expiry-minutes: 5
-```
-
-### ogiri-redis
-
-Add both the Ogiri Redis module **and** the Spring Data Redis starter (peer dependency):
-
-=== "Gradle (Kotlin DSL)"
-
-    ```kotlin
-    implementation("com.quantipixels.ogiri:ogiri-redis:{{ config.extra.ogiri_version }}")
-    implementation("org.springframework.boot:spring-boot-starter-data-redis")
-    ```
-
-=== "Gradle (Groovy)"
-
-    ```groovy
-    implementation 'com.quantipixels.ogiri:ogiri-redis:{{ config.extra.ogiri_version }}'
-    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-    ```
-
-=== "Maven"
-
-    ```xml
-    <dependency>
-      <groupId>com.quantipixels.ogiri</groupId>
-      <artifactId>ogiri-redis</artifactId>
-      <version>{{ config.extra.ogiri_version }}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-data-redis</artifactId>
-    </dependency>
-    ```
-
-Activate in `application.yml` (your existing `spring.data.redis.*` config is reused automatically):
-
-```yaml
-spring:
-  data:
-    redis:
-      host: localhost
-      port: 6379
-
-ogiri:
-  lookup:
-    type: redis
-    expiry-minutes: 5
-```
-
-### Spring CacheManager Bridge
-
-If your application already has a `CacheManager` bean configured — through Ehcache, Hazelcast,
-JCache, Infinispan, or simply `spring.cache.type=redis` — you can reuse it as the Ogiri token
-lookup cache without adding `ogiri-caffeine` or `ogiri-redis`.
-
-Enable the bridge in `application.yml`:
-
-```yaml
-spring:
-  cache:
-    cache-names: ogiri-token-lookup # must declare the cache name explicitly
-    redis: # example: Redis-backed CacheManager
-      time-to-live: 300000 # 5 minutes in ms
-
-ogiri:
-  cache:
-    use-spring-cache-manager: true
-    cache-name: ogiri-token-lookup # must match a name in spring.cache.cache-names
-```
-
-**Backend compatibility** — any `CacheManager` implementation works. Ogiri only calls
-`Cache.get()`, `Cache.put()`, and `Cache.evict()`, which are supported by all backends.
-
-!!! warning "evictAll is a no-op on this tier"
-Spring's `Cache` interface has no pattern-based eviction. When all sessions for a user
-are revoked (e.g. "log out everywhere"), `evictAll(userId)` logs a `WARN` and returns
-without clearing the cache. Stale entries expire when the TTL elapses. For immediate
-user-wide eviction, use `ogiri-redis` or provide a custom `OgiriTokenLookupCache` bean.
-
-!!! failure "Cache name not declared"
-If `ogiri.cache.cache-name` does not appear in `spring.cache.cache-names`, the adapter
-throws `IllegalStateException` on first cache access. Backends that auto-create caches
-on demand (Caffeine, simple in-memory) do not require the name to be pre-declared.
-
-The bridge is inactive when `ogiri-caffeine` or `ogiri-redis` is on the classpath — the
-dedicated module takes precedence via `@ConditionalOnMissingBean`.
-
-### Custom Cache
-
-Provide your own `OgiriTokenLookupCache<T>` bean and neither autoconfiguration activates:
-
-```kotlin
-@Component
-class MyCustomTokenCache : OgiriTokenLookupCache<MyToken> {
-  override fun get(userId: Long, client: String): MyToken? = TODO()
-  override fun put(userId: Long, client: String, token: MyToken) = TODO()
-  override fun evict(userId: Long, client: String) = TODO()
-  override fun evictAll(userId: Long) = TODO()
-}
-```
-
-No `ogiri.lookup.type` property is required when supplying a custom bean.
-
-## Configuration Examples
-
-### Basic Setup
-
-```yaml
-ogiri:
-  security:
-    register-filter: true
-  auth:
-    max-clients: 10
-    batch-grace-seconds: 5
-    token-lifespan-days: 14
-    max-bearer-token-size: 8192
-    register-token-service: true
-  cleanup:
+  session:
     enabled: true
-    interval-ms: 21600000 # 6 hours
-    batch-size: 1000
-  cache:
-    max-size: 10000
-    expiry-minutes: 60
-  # lookup.type is absent by default — no entity cache
-  cookies:
-    enabled: true
-    secure: true
-    http-only: true
-    same-site: Strict
-    path: "/"
+    realm: users
+    transport: bearer # bearer, cookie, or dta-compat
+    lifetime: 14d
+    previous-version-grace: 5s
+    maximum-active-sessions: 10
+    evict-oldest-when-full: true
+    maximum-credential-bytes: 256
+    public-paths:
+      - /auth/sign-in
+      - /actuator/health
+    token-hash:
+      current-key-id: primary
+      keys:
+        primary: ${OGIRI_TOKEN_HASH_KEY_BASE64}
+    endpoints:
+      enabled: true
+    cleanup:
+      enabled: false
+      interval: 6h
+      lease: 30m
+      batch-size: 500
+    rate-limit:
+      enabled: false
+      sign-in-permits: 10
+      window: 1m
+      key-prefix: "my-app:prod:ogiri:rate-limit:"
 ```
 
-### High Security
+## Token hashing
 
-Frequent rotation, short tokens, strict limits:
+`token-hash.keys` values are standard Base64-encoded keys containing at least 32 random bytes. The key selected by `current-key-id` signs new verifier digests. Existing sessions retain their key ID, so old keys remain readable during rotation.
 
-```yaml
-ogiri:
-  auth:
-    max-clients: 5
-    batch-grace-seconds: 1
-    token-lifespan-days: 7
-    max-bearer-token-size: 4096 # Stricter limit
-    rotate-on-write-only: false
-    rotate-stale-seconds: 3600 # Force rotation every hour
-  cleanup:
-    interval-ms: 3600000 # 1 hour
-    batch-size: 500
-  cookies:
-    enabled: true
-    secure: true
-    http-only: true
-    same-site: Strict
-```
+Rotation procedure:
 
-### High Performance
+1. Add a new key while retaining the old key.
+2. Change `current-key-id` to the new ID on every node.
+3. Wait for old sessions to expire or revoke them.
+4. Remove the old key.
 
-Longer tokens, less rotation:
+A password encoder is not a token hasher. Credential authentication remains owned by the application's `AuthenticationManager`; Ogiri uses HMAC-SHA-256 only for random session verifiers.
 
-```yaml
-ogiri:
-  auth:
-    max-clients: 50
-    batch-grace-seconds: 30
-    token-lifespan-days: 30
-    rotate-on-write-only: true # Only rotate on writes
-    rotate-stale-seconds: 0 # No forced rotation
-```
+## Transport profiles
 
-### Development
+### Bearer
 
-Lenient settings for testing:
+The default v4 profile accepts exactly one case-insensitive `Bearer` scheme containing a canonical opaque `selector.verifier` value. It emits credentials only through `Authorization` and adds `Cache-Control: no-store`.
 
-```yaml
-ogiri:
-  auth:
-    max-clients: 100
-    batch-grace-seconds: 60
-    token-lifespan-days: 30
-  cleanup:
-    enabled: false # Keep test tokens
-  cookies:
-    secure: false # Allow HTTP in development
-```
+### Cookie
 
-## Startup Warnings
+Cookie mode accepts only the configured cookie and emits no readable token header or body field. Defaults:
 
-The library logs warnings at startup for potentially insecure configurations:
+- name `__Host-ogiri-session`
+- `Secure=true`
+- `HttpOnly=true`
+- `SameSite=Strict`
+- `Path=/`
+- CSRF enabled with Spring Security's cookie token repository
 
-| Configuration                       | Warning                                                          |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| `ogiri.auth.rotate-stale-seconds=0` | Time-based rotation disabled; consider setting to 3600 or higher |
-| `ogiri.cookies.secure=false`        | Enable for HTTPS deployments                                     |
-| `ogiri.cookies.http-only=false`     | Enable to prevent XSS cookie theft                               |
-| `ogiri.lookup.type=<unknown>`       | Unrecognized value; no lookup cache will be activated            |
+`SameSite=None` requires `Secure=true`; `__Host-` requires `Secure=true` and `Path=/`.
 
-These warnings are informational and do not prevent the application from starting. They help identify security misconfigurations in production environments.
+### DTA compatibility
 
-## Custom Beans
+`dta-compat` isolates the legacy `access-token`, `client`, and `uid` headers. It is not the default and cannot be combined with bearer or cookie output.
 
-### Custom OgiriTokenService
+## Security chain
 
-If you provide your own `OgiriTokenService`, Ògiri will not create its default token service.
+When the application owns a `SecurityFilterChain`, apply `OgiriHttpConfigurer` to that same chain and define authorization there. When no chain exists, the optional starter permits `public-paths` and protects every other request.
 
-If you intentionally have multiple `OgiriTokenService` beans, mark exactly one as `@Primary` or
-inject by `@Qualifier` to avoid ambiguity.
+## Cleanup
 
-```kotlin
-@Configuration
-class CustomConfig(private val properties: OgiriConfigurationProperties) {
+Cleanup is disabled by default. Enabling it requires both `SessionManager` and a cluster-safe `OgiriJobLease`; otherwise startup fails. The JPA adapter supplies a database lease. Each bounded page executes through a separate store transaction, allowing safe resume after failure.
 
-  @Bean
-  fun tokenService(
-    tokenRepository: OgiriTokenRepository<MyToken>,
-    passwordEncoder: PasswordEncoder,
-    ogiriUserDirectory: OgiriUserDirectory,
-    identifierPolicy: IdentifierPolicy,
-    subTokenRegistry: OgiriSubTokenRegistry,
-    auditHook: ObjectProvider<OgiriAuditHook>,
-    rateLimitHook: ObjectProvider<OgiriRateLimitHook>,
-    lookupCache: ObjectProvider<OgiriTokenLookupCache<MyToken>>,
-  ): OgiriTokenService<MyToken> {
-    val service = MyCustomTokenService(
-      tokenRepository,
-      passwordEncoder,
-      ogiriUserDirectory,
-      identifierPolicy,
-      subTokenRegistry,
-      properties,
-    )
-    auditHook.ifAvailable { service.setAuditHook(it) }
-    rateLimitHook.ifAvailable { service.setRateLimitHook(it) }
-    lookupCache.ifAvailable { service.setLookupCache(it) }
-    return service
-  }
-}
-```
+## Distributed rate limiting
 
-### Custom SecurityFilterChain
-
-Disable auto-configuration:
-
-```yaml
-ogiri:
-  security:
-    register-filter: false
-```
-
-Then provide your own:
-
-```kotlin
-@Configuration
-class SecurityConfig {
-
-  @Bean
-  fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
-    return http
-      .authorizeRequests { it.anyRequest().authenticated() }
-      .addFilter(OgiriTokenAuthenticationFilter(tokenService, authBypassDecider))
-      .build()
-  }
-}
-```
-
-## Properties File Format
-
-```properties
-ogiri.security.register-filter=true
-ogiri.auth.max-clients=10
-ogiri.auth.batch-grace-seconds=5
-ogiri.auth.token-lifespan-days=14
-ogiri.auth.max-bearer-token-size=8192
-ogiri.auth.rotate-on-write-only=false
-ogiri.auth.rotate-stale-seconds=3600
-ogiri.auth.register-token-service=true
-ogiri.cleanup.enabled=true
-ogiri.cleanup.interval-ms=21600000
-ogiri.cleanup.batch-size=1000
-ogiri.cookies.enabled=true
-ogiri.cookies.secure=true
-ogiri.cookies.http-only=true
-ogiri.cookies.same-site=Strict
-ogiri.cookies.path=/
-```
-
-## Troubleshooting
-
-| Issue                          | Solution                                          |
-| ------------------------------ | ------------------------------------------------- |
-| Token expires immediately      | Increase `token-lifespan-days`                    |
-| Tokens rotate too frequently   | Increase `batch-grace-seconds`                    |
-| Too many active tokens         | Decrease `max-clients`                            |
-| Tests fail with token mismatch | Set `ogiri.cleanup.enabled=false` in test profile |
+Enabling rate limiting requires an `OgiriRateLimiter`. With `ogiri-redis`, Ogiri hashes IP/normalized-identifier keys and uses one atomic Redis script per bucket. Forwarded headers are not trusted by default. Rejections use RFC 9457 problem details, status `429`, and `Retry-After`.

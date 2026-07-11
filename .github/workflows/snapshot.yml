@@ -6,6 +6,12 @@ on:
     paths:
       - "ogiri-core/**"
       - "ogiri-jpa/**"
+      - "ogiri-session-core/**"
+      - "ogiri-bom/**"
+      - "ogiri-test/**"
+      - "ogiri-jdbc/**"
+      - "ogiri-caffeine/**"
+      - "ogiri-redis/**"
       - "build.gradle.kts"
       - "settings.gradle.kts"
       - "gradle/**"
@@ -25,19 +31,19 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
           java-version: 17
           distribution: "temurin"
           cache: gradle
 
       - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
