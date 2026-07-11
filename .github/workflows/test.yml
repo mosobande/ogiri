@@ -52,5 +52,5 @@ jobs:
         with:
           files: ./ogiri-core/build/reports/jacoco/test/jacocoTestReport.xml,./ogiri-jpa/build/reports/jacoco/test/jacocoTestReport.xml
           flags: unittests
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           use_oidc: true
