@@ -73,6 +73,7 @@ public constructor(
   }
 
   public companion object {
+    public const val MIN_CREDENTIAL_CHARS: Int = 66
     public const val MAX_CREDENTIAL_CHARS: Int = 128
     private val BASE64_URL = Regex("[A-Za-z0-9_-]+")
     private val ENCODER = Base64.getUrlEncoder().withoutPadding()

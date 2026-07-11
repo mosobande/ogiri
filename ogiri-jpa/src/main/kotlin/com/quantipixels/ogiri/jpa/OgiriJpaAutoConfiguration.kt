@@ -23,6 +23,7 @@ import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfigurat
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.transaction.PlatformTransactionManager
 
 @AutoConfiguration(
     after = [HibernateJpaAutoConfiguration::class],
@@ -33,8 +34,10 @@ import org.springframework.data.jpa.repository.JpaRepository
 public open class OgiriJpaAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean(SessionStore::class)
-  public open fun ogiriJpaSessionStore(entityManager: EntityManager): SessionStore =
-      OgiriJpaSessionStore(entityManager)
+  public open fun ogiriJpaSessionStore(
+      entityManager: EntityManager,
+      transactionManager: PlatformTransactionManager,
+  ): SessionStore = OgiriJpaSessionStore(entityManager, transactionManager)
 
   @Bean
   @ConditionalOnMissingBean(OgiriJobLease::class)

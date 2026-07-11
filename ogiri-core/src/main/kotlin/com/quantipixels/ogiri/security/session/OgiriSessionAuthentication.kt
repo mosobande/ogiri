@@ -13,6 +13,7 @@
 package com.quantipixels.ogiri.security.session
 
 import com.quantipixels.ogiri.session.AuthenticatedSession
+import com.quantipixels.ogiri.session.OpaqueTokenCodec
 import com.quantipixels.ogiri.session.SessionError
 import com.quantipixels.ogiri.session.SessionManager
 import jakarta.servlet.http.HttpServletRequest
@@ -70,8 +71,8 @@ public class OgiriBearerAuthenticationConverter(
     private val maximumCredentialBytes: Int = 256,
 ) : AuthenticationConverter {
   init {
-    require(maximumCredentialBytes in 64..4096) {
-      "maximum credential bytes must be between 64 and 4096"
+    require(maximumCredentialBytes in OpaqueTokenCodec.MIN_CREDENTIAL_CHARS..4096) {
+      "maximum credential bytes must be between ${OpaqueTokenCodec.MIN_CREDENTIAL_CHARS} and 4096"
     }
   }
 
@@ -80,7 +81,7 @@ public class OgiriBearerAuthenticationConverter(
     if (values.isEmpty()) return null
     if (values.size != 1) throw BadCredentialsException("multiple_authorization_headers")
     val value = values.single()
-    if (value.toByteArray(StandardCharsets.ISO_8859_1).size > maximumCredentialBytes) {
+    if (value.toByteArray(StandardCharsets.ISO_8859_1).size > maximumCredentialBytes + 7) {
       throw BadCredentialsException("credential_too_large")
     }
     val separator = value.indexOf(' ')
@@ -88,6 +89,9 @@ public class OgiriBearerAuthenticationConverter(
       throw BadCredentialsException("unsupported_authorization_scheme")
     }
     val credential = value.substring(separator + 1)
+    if (credential.toByteArray(StandardCharsets.ISO_8859_1).size > maximumCredentialBytes) {
+      throw BadCredentialsException("credential_too_large")
+    }
     if (!credential.matches(OPAQUE_CREDENTIAL)) {
       throw BadCredentialsException("malformed_bearer_credential")
     }

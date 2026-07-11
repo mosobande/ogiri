@@ -12,6 +12,7 @@
  */
 package com.quantipixels.ogiri.security.session
 
+import com.quantipixels.ogiri.session.OpaqueTokenCodec
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -31,6 +32,24 @@ class OgiriBearerAuthenticationConverterTest {
         "bEaReR ${generated.selector}.${generated.verifier}",
     )
     assertNotNull(converter.convert(request))
+  }
+
+  @Test
+  fun `minimum configured size accepts a default credential`() {
+    assertThrows(IllegalArgumentException::class.java) {
+      OgiriBearerAuthenticationConverter(OpaqueTokenCodec.MIN_CREDENTIAL_CHARS - 1)
+    }
+    val generated = OpaqueTokenCodec().generate()
+    val request =
+        MockHttpServletRequest().apply {
+          addHeader(
+              HttpHeaders.AUTHORIZATION,
+              "Bearer ${generated.selector}.${generated.verifier}",
+          )
+        }
+
+    assertNotNull(
+        OgiriBearerAuthenticationConverter(OpaqueTokenCodec.MIN_CREDENTIAL_CHARS).convert(request))
   }
 
   @Test

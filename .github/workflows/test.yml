@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ori]
 
+permissions:
+  contents: read
+  id-token: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -46,10 +50,7 @@ jobs:
         if: always()
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
-          files: |
-            ./ogiri-core/build/reports/jacoco/test/jacocoTestReport.xml
-            ./ogiri-jpa/build/reports/jacoco/test/jacocoTestReport.xml
+          files: ./ogiri-core/build/reports/jacoco/test/jacocoTestReport.xml,./ogiri-jpa/build/reports/jacoco/test/jacocoTestReport.xml
           flags: unittests
           fail_ci_if_error: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true

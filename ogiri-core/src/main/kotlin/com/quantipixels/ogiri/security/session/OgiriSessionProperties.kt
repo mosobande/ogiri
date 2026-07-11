@@ -12,6 +12,7 @@
  */
 package com.quantipixels.ogiri.security.session
 
+import com.quantipixels.ogiri.session.OpaqueTokenCodec
 import jakarta.validation.Valid
 import jakarta.validation.constraints.AssertTrue
 import jakarta.validation.constraints.Max
@@ -40,12 +41,14 @@ public data class OgiriSessionProperties(
     val enabled: Boolean = false,
     val realm: String = "users",
     val transport: OgiriTransport = OgiriTransport.BEARER,
-    @field:Min(64) @field:Max(4096) val maximumCredentialBytes: Int = 256,
+    @field:Min(OpaqueTokenCodec.MIN_CREDENTIAL_CHARS.toLong())
+    @field:Max(4096)
+    val maximumCredentialBytes: Int = 256,
     val lifetime: Duration = Duration.ofDays(14),
     val previousVersionGrace: Duration = Duration.ofSeconds(5),
     @field:Min(1) val maximumActiveSessions: Int = 10,
     val evictOldestWhenFull: Boolean = true,
-    val publicPaths: List<String> = listOf("/auth/**", "/actuator/health"),
+    val publicPaths: List<String> = listOf("/auth/sign-in", "/actuator/health"),
     @field:Valid val tokenHash: TokenHash = TokenHash(),
     @field:Valid val cookie: Cookie = Cookie(),
     @field:Valid val endpoints: Endpoints = Endpoints(),
@@ -55,6 +58,9 @@ public data class OgiriSessionProperties(
   init {
     require(realm.matches(Regex("[a-z0-9][a-z0-9._-]{0,62}"))) {
       "ogiri.session.realm has invalid syntax"
+    }
+    require(maximumCredentialBytes >= OpaqueTokenCodec.MIN_CREDENTIAL_CHARS) {
+      "ogiri.session.maximum-credential-bytes must accept default credentials"
     }
     require(!lifetime.isNegative && !lifetime.isZero) { "ogiri.session.lifetime must be positive" }
     require(!previousVersionGrace.isNegative) {

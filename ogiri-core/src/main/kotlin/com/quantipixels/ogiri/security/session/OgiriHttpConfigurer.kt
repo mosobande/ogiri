@@ -66,6 +66,8 @@ public class OgiriHttpConfigurer(
     if (properties.transport == OgiriTransport.COOKIE) {
       http.csrf { it.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()) }
     } else {
+      // Header credentials are not ambient browser authority; CSRF applies only to cookie mode.
+      // lgtm[java/spring-disabled-csrf-protection]
       http.csrf { it.disable() }
     }
   }

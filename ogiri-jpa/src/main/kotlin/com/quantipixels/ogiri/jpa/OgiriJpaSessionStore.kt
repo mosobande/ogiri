@@ -33,13 +33,22 @@ import jakarta.persistence.LockModeType
 import jakarta.persistence.PersistenceContext
 import java.time.Instant
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 
 @Transactional
 public open class OgiriJpaSessionStore(
-    @PersistenceContext private val entityManager: EntityManager
+    @PersistenceContext private val entityManager: EntityManager,
+    transactionManager: PlatformTransactionManager,
 ) : SessionStore {
+  private val lockCreation =
+      TransactionTemplate(transactionManager).apply {
+        propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+        isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
+      }
   @Transactional(isolation = Isolation.SERIALIZABLE)
   override fun create(command: CreateSessionCommand): CreateSessionResult {
     lockSubject(command.session.subject)
@@ -206,13 +215,32 @@ public open class OgiriJpaSessionStore(
 
   private fun lockSubject(subject: SubjectRef) {
     val key = subject.key()
-    var lock = entityManager.find(OgiriSubjectLockEntity::class.java, key)
-    if (lock == null) {
-      entityManager.persist(OgiriSubjectLockEntity(key))
-      entityManager.flush()
-      lock = entityManager.find(OgiriSubjectLockEntity::class.java, key)
-    }
+    ensureSubjectLock(key)
+    val lock =
+        entityManager.find(OgiriSubjectLockEntity::class.java, key)
+            ?: throw IllegalStateException("subject lock was not committed")
     entityManager.lock(lock, LockModeType.PESSIMISTIC_WRITE)
+  }
+
+  private fun ensureSubjectLock(key: String) {
+    var insertionFailure: RuntimeException? = null
+    try {
+      lockCreation.executeWithoutResult {
+        if (entityManager.find(OgiriSubjectLockEntity::class.java, key) == null) {
+          entityManager.persist(OgiriSubjectLockEntity(key))
+          entityManager.flush()
+        }
+      }
+    } catch (failure: RuntimeException) {
+      insertionFailure = failure
+    }
+    if (insertionFailure == null) return
+
+    val concurrentlyInserted =
+        lockCreation.execute {
+          entityManager.find(OgiriSubjectLockEntity::class.java, key) != null
+        } == true
+    if (!concurrentlyInserted) throw insertionFailure
   }
 
   private fun findEntityBySelector(selector: String): OgiriSessionEntity? =

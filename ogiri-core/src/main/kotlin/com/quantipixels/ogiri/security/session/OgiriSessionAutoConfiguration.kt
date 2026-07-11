@@ -40,12 +40,14 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.scheduling.TaskScheduler
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
+import org.springframework.security.authentication.AccountStatusException
 import org.springframework.security.authentication.AccountStatusUserDetailsChecker
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.core.userdetails.UserDetailsService
+import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.web.SecurityFilterChain
 
 @AutoConfiguration(before = [SecurityAutoConfiguration::class])
@@ -104,7 +106,14 @@ public open class OgiriSessionAutoConfiguration {
   public open fun ogiriSubjectStatusChecker(users: UserDetailsService): SubjectStatusChecker {
     val checker = AccountStatusUserDetailsChecker()
     return SubjectStatusChecker { subject ->
-      runCatching { checker.check(users.loadUserByUsername(subject.subjectId.value)) }.isSuccess
+      try {
+        checker.check(users.loadUserByUsername(subject.subjectId.value))
+        true
+      } catch (_: UsernameNotFoundException) {
+        false
+      } catch (_: AccountStatusException) {
+        false
+      }
     }
   }
 

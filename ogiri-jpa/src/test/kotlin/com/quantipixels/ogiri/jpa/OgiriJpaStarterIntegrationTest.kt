@@ -17,10 +17,14 @@ import com.quantipixels.ogiri.session.Realm
 import com.quantipixels.ogiri.session.SessionManager
 import com.quantipixels.ogiri.session.SubjectId
 import com.quantipixels.ogiri.session.SubjectRef
+import com.quantipixels.ogiri.session.TenantId
 import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.SpringBootApplication
@@ -56,6 +60,41 @@ class OgiriJpaStarterIntegrationTest {
     assertThrows(com.quantipixels.ogiri.session.SessionError.Revoked::class.java) {
       sessions.authenticate(encoded)
     }
+  }
+
+  @Test
+  fun `concurrent first sign-ins share one committed subject lock`() {
+    val subject =
+        SubjectRef(
+            Realm("users"),
+            SubjectId("user-42"),
+            TenantId("first-sign-in-race"),
+        )
+    val ready = CountDownLatch(8)
+    val start = CountDownLatch(1)
+    val executor = Executors.newFixedThreadPool(8)
+    val outcomes =
+        try {
+          val futures =
+              List(8) { index ->
+                executor.submit(
+                    Callable {
+                      ready.countDown()
+                      start.await()
+                      runCatching { sessions.issue(subject, ClientContext("first-sign-in-$index")) }
+                    })
+              }
+          assertTrue(ready.await(5, TimeUnit.SECONDS))
+          start.countDown()
+          futures.map { it.get(10, TimeUnit.SECONDS) }
+        } finally {
+          start.countDown()
+          executor.shutdownNow()
+          executor.awaitTermination(10, TimeUnit.SECONDS)
+        }
+
+    assertTrue(outcomes.all { it.isSuccess })
+    assertEquals(8, sessions.list(subject).size)
   }
 
   @Test

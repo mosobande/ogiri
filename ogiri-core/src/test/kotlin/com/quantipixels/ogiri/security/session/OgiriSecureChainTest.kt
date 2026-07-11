@@ -19,6 +19,9 @@ import com.quantipixels.ogiri.session.SessionStore
 import com.quantipixels.ogiri.session.SubjectId
 import com.quantipixels.ogiri.session.SubjectRef
 import com.quantipixels.ogiri.test.InMemorySessionStore
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.SpringBootApplication
@@ -32,6 +35,7 @@ import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
+import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.provisioning.InMemoryUserDetailsManager
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.delete
@@ -47,7 +51,6 @@ import org.springframework.web.bind.annotation.RestController
             "ogiri.session.enabled=true",
             "ogiri.session.token-hash.current-key-id=test",
             "ogiri.session.token-hash.keys.test=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            "ogiri.session.public-paths=/public,/auth/sign-in",
             "ogiri.session.endpoints.enabled=true",
         ],
 )
@@ -62,12 +65,40 @@ class OgiriSecureChainTest {
   }
 
   @Test
-  fun `only configured public route is anonymous`() {
-    mockMvc.get("/public").andExpect {
-      status { isOk() }
-      content { string("public") }
-    }
-    mockMvc.get("/protected").andExpect { status { isUnauthorized() } }
+  fun `default public routes expose sign-in but protect session management`() {
+    mockMvc
+        .post("/auth/sign-in") {
+          contentType = MediaType.APPLICATION_JSON
+          content = """{"username":"user-42","password":"wrong","clientId":"browser"}"""
+        }
+        .andExpect { status { isUnauthorized() } }
+    mockMvc.get("/auth/session").andExpect { status { isUnauthorized() } }
+    mockMvc.get("/auth/sessions").andExpect { status { isUnauthorized() } }
+    mockMvc.delete("/auth/sign-out").andExpect { status { isUnauthorized() } }
+  }
+
+  @Test
+  fun `subject checker propagates transient user store failures`() {
+    val failure = IllegalStateException("directory unavailable")
+    val checker =
+        OgiriSessionAutoConfiguration()
+            .ogiriSubjectStatusChecker(UserDetailsService { throw failure })
+
+    val thrown =
+        assertThrows(IllegalStateException::class.java) {
+          checker.isAllowed(SubjectRef(Realm("users"), SubjectId("user-42")))
+        }
+    assertSame(failure, thrown)
+  }
+
+  @Test
+  fun `subject checker rejects definitive unknown users`() {
+    val checker =
+        OgiriSessionAutoConfiguration()
+            .ogiriSubjectStatusChecker(
+                UserDetailsService { throw UsernameNotFoundException("missing") })
+
+    assertFalse(checker.isAllowed(SubjectRef(Realm("users"), SubjectId("missing"))))
   }
 
   @Test
