@@ -15,12 +15,14 @@ package com.quantipixels.ogiri.security.session
 import java.time.Duration
 import java.time.Instant
 
+/** Result of atomically consuming one rate-limit permit. */
 public data class OgiriRateLimitDecision(
     val allowed: Boolean,
     val remaining: Long,
     val retryAfter: Duration,
 )
 
+/** Application or infrastructure boundary for fixed-window request limiting. */
 public fun interface OgiriRateLimiter {
   /** Atomically consumes one permit for a namespaced, non-secret key. */
   public fun consume(
@@ -31,5 +33,6 @@ public fun interface OgiriRateLimiter {
   ): OgiriRateLimitDecision
 }
 
+/** Signals an exhausted rate limit and carries the duration clients should wait before retrying. */
 public class OgiriRateLimitExceeded(public val retryAfter: Duration) :
     RuntimeException("rate_limit_exceeded")

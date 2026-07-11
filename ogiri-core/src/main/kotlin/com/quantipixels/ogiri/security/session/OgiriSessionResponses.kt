@@ -28,10 +28,17 @@ import org.springframework.security.core.AuthenticationException
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.authentication.AuthenticationFailureHandler
 
+/**
+ * Writes issued credentials using the configured response transport.
+ *
+ * Every response is marked `no-store`; credential values are emitted only in headers or cookies,
+ * never in an endpoint response body.
+ */
 public class OgiriSessionResponseWriter(
     private val properties: OgiriSessionProperties,
     private val codec: TokenCodec = OpaqueTokenCodec(),
 ) {
+  /** Writes [issued]'s credential and the response cache controls required for secret material. */
   public fun writeCredential(response: HttpServletResponse, issued: IssuedSession) {
     response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store")
     response.setHeader(HttpHeaders.PRAGMA, "no-cache")
@@ -48,6 +55,7 @@ public class OgiriSessionResponseWriter(
     }
   }
 
+  /** Expires the configured credential cookie, when applicable, and disables response caching. */
   public fun clearCredential(response: HttpServletResponse) {
     response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store")
     response.setHeader(HttpHeaders.PRAGMA, "no-cache")
@@ -71,6 +79,11 @@ public class OgiriSessionResponseWriter(
   }
 }
 
+/**
+ * Renders authentication failures as safe RFC 9457 problem details.
+ *
+ * Exception messages are exposed only when they match the restricted machine-code grammar.
+ */
 public class OgiriProblemAuthenticationEntryPoint(private val mapper: ObjectMapper) :
     AuthenticationEntryPoint, AuthenticationFailureHandler {
   override fun commence(

@@ -14,6 +14,7 @@ package com.quantipixels.ogiri.session
 
 import java.time.Instant
 
+/** Stable identifier assigned to a persisted session. */
 @JvmInline
 public value class SessionId(public val value: String) {
   init {
@@ -23,6 +24,7 @@ public value class SessionId(public val value: String) {
   public override fun toString(): String = value
 }
 
+/** Application-defined identifier of the account or principal that owns a session. */
 @JvmInline
 public value class SubjectId(public val value: String) {
   init {
@@ -32,6 +34,12 @@ public value class SubjectId(public val value: String) {
   public override fun toString(): String = value
 }
 
+/**
+ * Namespace in which a [SubjectId] is interpreted.
+ *
+ * Realm names are safe for storage keys and must contain 1–63 lowercase ASCII letters, digits,
+ * dots, underscores, or hyphens.
+ */
 @JvmInline
 public value class Realm(public val value: String) {
   init {
@@ -47,6 +55,7 @@ public value class Realm(public val value: String) {
   }
 }
 
+/** Optional tenant boundary used to distinguish otherwise identical subjects. */
 @JvmInline
 public value class TenantId(public val value: String) {
   init {
@@ -56,6 +65,13 @@ public value class TenantId(public val value: String) {
   public override fun toString(): String = value
 }
 
+/**
+ * Canonical identity of a session owner.
+ *
+ * @property realm namespace of the subject identifier
+ * @property subjectId identifier within [realm]
+ * @property tenantId optional tenant boundary
+ */
 public data class SubjectRef
 @JvmOverloads
 public constructor(
@@ -70,6 +86,12 @@ public constructor(
   public fun tenantValue(): String? = tenantId?.value
 }
 
+/**
+ * Metadata identifying the client on which a session was issued.
+ *
+ * Only [clientId] participates in client-targeted revocation. The remaining fields are descriptive
+ * metadata suitable for session-management views and audit events.
+ */
 public data class ClientContext
 @JvmOverloads
 public constructor(
@@ -83,8 +105,21 @@ public constructor(
   }
 }
 
+/**
+ * One-way verifier digest stored with a session.
+ *
+ * @property keyId identifies the hashing key so credentials remain verifiable during key rotation
+ * @property value encoded digest produced by [TokenHasher]
+ */
 public data class TokenDigest(public val keyId: String, public val value: String)
 
+/**
+ * Complete persisted state of a session.
+ *
+ * [currentDigest] authenticates the current credential. During rotation, [previousDigest] remains
+ * valid only until [previousValidUntil], allowing a bounded grace window for concurrent requests. A
+ * session is immutable; stores replace it using optimistic [version] checks.
+ */
 public data class StoredSession(
     public val id: SessionId,
     public val selector: String,
@@ -111,9 +146,11 @@ public data class StoredSession(
     }
   }
 
+  /** Returns whether this session is neither revoked nor expired at [at]. */
   public fun isActive(at: Instant): Boolean = revokedAt == null && at.isBefore(expiresAt)
 }
 
+/** Machine-readable reason recorded when a session is revoked. */
 public enum class RevocationReason {
   SIGN_OUT,
   SIGN_OUT_ALL,
@@ -126,19 +163,32 @@ public enum class RevocationReason {
   PARENT_REVOKED,
 }
 
+/**
+ * Secret credential returned to a client when a session is issued or rotated.
+ *
+ * The verifier is sensitive and must not be persisted or logged in plaintext.
+ */
 public data class SessionCredential(
     public val sessionId: SessionId,
     public val selector: String,
     public val verifier: String,
 ) {
+  /** Encodes the public selector and secret verifier for transport using [codec]. */
   public fun encoded(codec: TokenCodec): String = codec.encode(selector, verifier)
 }
 
+/** Newly persisted session state together with the credential that authenticates it. */
 public data class IssuedSession(
     public val session: StoredSession,
     public val credential: SessionCredential,
 )
 
+/**
+ * Non-secret identity established after successful credential verification.
+ *
+ * [usedPreviousVersion] is true when authentication succeeded within the configured rotation grace
+ * window and callers should return the latest credential rather than rotate again.
+ */
 public data class AuthenticatedSession(
     public val sessionId: SessionId,
     public val subject: SubjectRef,
@@ -148,6 +198,11 @@ public data class AuthenticatedSession(
     public val usedPreviousVersion: Boolean,
 )
 
+/**
+ * Expected session failure with a stable [code] suitable for protocol error responses.
+ *
+ * Concrete subclasses deliberately contain no credential or persistence details.
+ */
 public sealed class SessionError(public val code: String, message: String) :
     RuntimeException(message) {
   public class InvalidCredential :

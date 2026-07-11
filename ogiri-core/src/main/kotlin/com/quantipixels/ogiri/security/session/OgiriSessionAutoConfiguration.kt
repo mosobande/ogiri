@@ -50,6 +50,12 @@ import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.web.SecurityFilterChain
 
+/**
+ * Spring Boot auto-configuration for the session subsystem.
+ *
+ * Activates only when `ogiri.session.enabled=true`. Every extension boundary with an application-
+ * specific policy or infrastructure implementation backs off when a user bean is present.
+ */
 @AutoConfiguration(before = [SecurityAutoConfiguration::class])
 @EnableConfigurationProperties(OgiriSessionProperties::class)
 @ConditionalOnProperty(
@@ -73,6 +79,11 @@ public open class OgiriSessionAutoConfiguration {
   public open fun ogiriTokenCodec(secureRandom: SecureRandom): TokenCodec =
       OpaqueTokenCodec(secureRandom)
 
+  /**
+   * Creates the default key-rotatable verifier hasher.
+   *
+   * Fails startup rather than issuing credentials when key material is absent or malformed.
+   */
   @Bean
   @ConditionalOnMissingBean
   public open fun ogiriTokenHasher(properties: OgiriSessionProperties): TokenHasher {
@@ -117,6 +128,7 @@ public open class OgiriSessionAutoConfiguration {
     }
   }
 
+  /** Builds the session coordinator once persistence and subject-status policies are available. */
   @Bean
   @ConditionalOnBean(SessionStore::class, SubjectStatusChecker::class)
   @ConditionalOnMissingBean
@@ -281,6 +293,11 @@ public open class OgiriSessionAutoConfiguration {
   ): OgiriSessionCleanupScheduler =
       OgiriSessionCleanupScheduler(sessions, lease, scheduler, clock, properties.cleanup)
 
+  /**
+   * Supplies a stateless default security chain when the application has not declared one.
+   *
+   * Configured public paths are permitted and every other request requires authentication.
+   */
   @Bean("ogiriSecureSecurityFilterChain")
   @ConditionalOnBean(OgiriHttpConfigurer::class)
   @ConditionalOnDefaultWebSecurity

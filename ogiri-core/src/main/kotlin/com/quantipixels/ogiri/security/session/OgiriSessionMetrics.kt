@@ -18,6 +18,12 @@ import io.micrometer.core.instrument.MeterRegistry
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 
+/**
+ * Records session lifecycle events as a low-cardinality Micrometer counter.
+ *
+ * Only action and result tags are emitted; subject and session identifiers are deliberately
+ * omitted.
+ */
 public class OgiriSessionMetrics(private val registry: MeterRegistry) : SessionEventPublisher {
   private val lastEvent = AtomicReference<Instant?>()
 
@@ -34,5 +40,6 @@ public class OgiriSessionMetrics(private val registry: MeterRegistry) : SessionE
     lastEvent.set(event.occurredAt)
   }
 
+  /** Returns the occurrence time of the most recently observed event. */
   public fun lastEventAt(): Instant? = lastEvent.get()
 }

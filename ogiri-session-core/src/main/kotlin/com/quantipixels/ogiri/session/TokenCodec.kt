@@ -15,16 +15,30 @@ package com.quantipixels.ogiri.session
 import java.security.SecureRandom
 import java.util.Base64
 
+/**
+ * Parsed credential parts.
+ *
+ * [selector] may be used for indexed lookup; [verifier] is secret credential material.
+ */
 public data class DecodedCredential(public val selector: String, public val verifier: String)
 
+/** Generates, encodes, and parses transport-safe session credentials. */
 public interface TokenCodec {
+  /** Generates a cryptographically random selector and verifier. */
   public fun generate(): DecodedCredential
 
+  /** Encodes validated credential parts into their transport representation. */
   public fun encode(selector: String, verifier: String): String
 
+  /** Parses a transport representation or throws when it is malformed. */
   public fun decode(encoded: String): DecodedCredential
 }
 
+/**
+ * Dot-delimited, unpadded Base64URL credential codec.
+ *
+ * The default sizes provide a 128-bit selector and a 256-bit verifier.
+ */
 public class OpaqueTokenCodec
 @JvmOverloads
 public constructor(
@@ -73,7 +87,9 @@ public constructor(
   }
 
   public companion object {
+    /** Smallest encoded credential accepted by this codec. */
     public const val MIN_CREDENTIAL_CHARS: Int = 66
+    /** Largest encoded credential accepted, bounding parsing work for untrusted input. */
     public const val MAX_CREDENTIAL_CHARS: Int = 128
     private val BASE64_URL = Regex("[A-Za-z0-9_-]+")
     private val ENCODER = Base64.getUrlEncoder().withoutPadding()

@@ -26,6 +26,12 @@ import com.quantipixels.ogiri.session.SubjectRef
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Thread-safe in-memory [SessionStore] for tests.
+ *
+ * It implements the same admission and optimistic-update outcomes as production stores and returns
+ * copies so test code cannot mutate committed state accidentally.
+ */
 public class InMemorySessionStore : SessionStore {
   private val byId = ConcurrentHashMap<SessionId, StoredSession>()
   private val selectorToId = ConcurrentHashMap<String, SessionId>()
@@ -140,5 +146,6 @@ public class InMemorySessionStore : SessionStore {
     return ids.size
   }
 
+  /** Returns detached copies of every stored session, including revoked and expired entries. */
   public fun snapshot(): List<StoredSession> = byId.values.map(StoredSession::copy)
 }

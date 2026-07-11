@@ -44,20 +44,26 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 
+/** Converts successful primary authentication into the subject that will own a session. */
 public fun interface OgiriSubjectResolver {
+  /** Resolves the canonical session subject for [authentication]. */
   public fun resolve(authentication: Authentication): SubjectRef
 }
 
+/** Derives trusted client metadata for a newly issued session. */
 public fun interface OgiriClientContextResolver {
+  /** Resolves client metadata, treating [requestedClientId] as untrusted request input. */
   public fun resolve(request: HttpServletRequest, requestedClientId: String?): ClientContext
 }
 
+/** JSON request accepted by the optional sign-in endpoint. */
 public data class SignInRequest(
     @field:NotBlank val username: String,
     @field:NotBlank val password: String,
     val clientId: String? = null,
 )
 
+/** Non-secret session representation returned by session-management endpoints. */
 public data class SessionView(
     val id: String,
     val subject: String,
@@ -71,6 +77,12 @@ public data class SessionView(
     val current: Boolean,
 )
 
+/**
+ * Optional REST controller for the complete session lifecycle under `/auth`.
+ *
+ * The controller is created only when `ogiri.session.endpoints.enabled=true`. Credentials are
+ * written through [OgiriSessionResponseWriter] and never included in response bodies.
+ */
 @ConditionalOnProperty(
     prefix = "ogiri.session.endpoints",
     name = ["enabled"],
@@ -95,6 +107,7 @@ public class OgiriSessionEndpointController(
     }
   }
 
+  /** Authenticates primary credentials and issues a new client session. */
   @PostMapping("/sign-in")
   @ResponseStatus(HttpStatus.CREATED)
   public fun signIn(
@@ -115,6 +128,7 @@ public class OgiriSessionEndpointController(
     return issued.session.toView(current = true)
   }
 
+  /** Rotates the request's current session credential. */
   @PostMapping("/refresh")
   public fun refresh(request: HttpServletRequest, response: HttpServletResponse): SessionView {
     val issued = sessions.rotate(credentialResolver.resolveRequired(request))
@@ -122,6 +136,7 @@ public class OgiriSessionEndpointController(
     return issued.session.toView(current = true)
   }
 
+  /** Revokes the current session and clears its response credential. */
   @DeleteMapping("/sign-out")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public fun signOut(authentication: Authentication, response: HttpServletResponse) {
@@ -129,6 +144,7 @@ public class OgiriSessionEndpointController(
     responses.clearCredential(response)
   }
 
+  /** Returns the current session as stored, or reports it as revoked when no longer active. */
   @GetMapping("/session")
   public fun current(authentication: Authentication): SessionView {
     val current = authentication.authenticatedSession()
@@ -139,12 +155,14 @@ public class OgiriSessionEndpointController(
         ?: throw SessionError.Revoked()
   }
 
+  /** Lists every active session belonging to the current subject. */
   @GetMapping("/sessions")
   public fun list(authentication: Authentication): List<SessionView> {
     val current = authentication.authenticatedSession()
     return sessions.list(current.subject).map { it.toView(current = it.id == current.sessionId) }
   }
 
+  /** Revokes a subject-owned session by ID without revealing whether another subject owns it. */
   @DeleteMapping("/sessions/{sessionId}")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public fun revoke(
@@ -154,6 +172,7 @@ public class OgiriSessionEndpointController(
     sessions.revoke(authentication.authenticatedSession().subject, SessionId(sessionId))
   }
 
+  /** Revokes every active session except the current session. */
   @DeleteMapping("/sessions")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public fun revokeOthers(authentication: Authentication) {
@@ -194,10 +213,13 @@ public class OgiriSessionEndpointController(
   }
 }
 
+/** Extracts a session credential from the transport selected in [OgiriSessionProperties]. */
 public class OgiriRequestCredentialResolver(private val properties: OgiriSessionProperties) {
+  /** Resolves a credential or throws when the configured transport contains none. */
   public fun resolveRequired(request: HttpServletRequest): String =
       resolve(request) ?: throw IllegalArgumentException("session credential is required")
 
+  /** Resolves the configured credential transport, returning `null` when absent or malformed. */
   public fun resolve(request: HttpServletRequest): String? {
     return when (properties.transport) {
       OgiriTransport.BEARER -> {

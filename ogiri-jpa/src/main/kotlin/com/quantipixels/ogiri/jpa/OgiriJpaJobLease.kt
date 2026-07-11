@@ -19,6 +19,12 @@ import java.time.Instant
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 
+/**
+ * Transactional JPA implementation of a cluster-safe [OgiriJobLease].
+ *
+ * Each acquire or release uses an independent transaction and a pessimistic row lock. An expired
+ * lease may be taken by another owner; an active lease may be renewed by its current owner.
+ */
 public open class OgiriJpaJobLease(private val entityManager: EntityManager) : OgiriJobLease {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   override fun tryAcquire(name: String, owner: String, now: Instant, until: Instant): Boolean {

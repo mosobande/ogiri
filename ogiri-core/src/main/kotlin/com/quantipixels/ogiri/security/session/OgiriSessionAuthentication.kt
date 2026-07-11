@@ -27,6 +27,7 @@ import org.springframework.security.core.GrantedAuthority
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.web.authentication.AuthenticationConverter
 
+/** Non-secret session identity exposed through Spring Security's [Authentication] principal. */
 public data class OgiriSessionPrincipal(
     val subject: String,
     val realm: String,
@@ -37,10 +38,18 @@ public data class OgiriSessionPrincipal(
     val familyId: String,
 )
 
+/** Maps an authenticated session to application-specific Spring Security authorities. */
 public fun interface OgiriAuthorityResolver {
+  /** Resolves all authorities granted to [session]. */
   public fun resolve(session: AuthenticatedSession): Collection<GrantedAuthority>
 }
 
+/**
+ * Spring Security authentication token for Ogiri credentials and authenticated principals.
+ *
+ * The unauthenticated form retains the raw credential only until provider authentication. The
+ * authenticated form drops it to prevent later disclosure through the security context.
+ */
 public class OgiriSessionAuthenticationToken
 private constructor(
     private val rawCredential: String?,
@@ -56,9 +65,11 @@ private constructor(
   override fun getPrincipal(): Any = sessionPrincipal ?: ""
 
   public companion object {
+    /** Creates a provider input carrying an unverified credential. */
     public fun unauthenticated(credential: String): OgiriSessionAuthenticationToken =
         OgiriSessionAuthenticationToken(credential, null, emptyList())
 
+    /** Creates an authenticated token that contains no raw credential. */
     public fun authenticated(
         principal: OgiriSessionPrincipal,
         authorities: Collection<GrantedAuthority>,
@@ -67,6 +78,12 @@ private constructor(
   }
 }
 
+/**
+ * Strictly converts one Bearer authorization header into an Ogiri authentication request.
+ *
+ * Multiple headers, unsupported schemes, oversized values, and malformed opaque credentials are
+ * rejected before cryptographic or persistence work.
+ */
 public class OgiriBearerAuthenticationConverter(
     private val maximumCredentialBytes: Int = 256,
 ) : AuthenticationConverter {
@@ -103,6 +120,7 @@ public class OgiriBearerAuthenticationConverter(
   }
 }
 
+/** Authenticates [OgiriSessionAuthenticationToken] instances through [SessionManager]. */
 public class OgiriSessionAuthenticationProvider(
     private val sessions: SessionManager,
     private val authorityResolver: OgiriAuthorityResolver = OgiriAuthorityResolver {

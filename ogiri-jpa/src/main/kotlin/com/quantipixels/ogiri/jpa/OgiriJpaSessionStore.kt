@@ -39,6 +39,12 @@ import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 
+/**
+ * JPA implementation of [SessionStore].
+ *
+ * Subject-scoped pessimistic locking serializes admission-limit decisions, while credential
+ * rotation and revocation use atomic version-checked updates.
+ */
 @Transactional
 public open class OgiriJpaSessionStore(
     @PersistenceContext private val entityManager: EntityManager,

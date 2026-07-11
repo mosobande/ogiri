@@ -18,12 +18,21 @@ import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
+/** Produces and verifies one-way digests of secret credential verifiers. */
 public interface TokenHasher {
+  /** Digests [verifier] with the current key and records that key's identifier. */
   public fun digest(verifier: String): TokenDigest
 
+  /** Verifies [verifier] against [digest] in constant time when its key is available. */
   public fun matches(verifier: String, digest: TokenDigest): Boolean
 }
 
+/**
+ * HMAC-SHA-256 token hasher with key identifiers for non-disruptive key rotation.
+ *
+ * New digests use [currentKeyId]; verification accepts any supplied key. Key byte arrays are copied
+ * during construction so later caller mutation cannot change verification behavior.
+ */
 public class HmacSha256TokenHasher(
     private val currentKeyId: String,
     keys: Map<String, ByteArray>,
@@ -59,6 +68,7 @@ public class HmacSha256TokenHasher(
   private fun encode(value: ByteArray): String = ENCODER.encodeToString(value)
 
   public companion object {
+    /** Minimum accepted HMAC key size, in bytes. */
     public const val MINIMUM_KEY_BYTES: Int = 32
     private const val ALGORITHM = "HmacSHA256"
     private val ENCODER = Base64.getUrlEncoder().withoutPadding()

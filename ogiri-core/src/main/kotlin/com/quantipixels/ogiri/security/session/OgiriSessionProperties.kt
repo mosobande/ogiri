@@ -23,18 +23,27 @@ import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.validation.annotation.Validated
 
+/** HTTP transport used to receive and return session credentials. */
 public enum class OgiriTransport {
   BEARER,
   COOKIE,
   DTA_COMPAT,
 }
 
+/** Supported values for a session cookie's `SameSite` attribute. */
 public enum class OgiriSameSite {
   STRICT,
   LAX,
   NONE,
 }
 
+/**
+ * Validated configuration for the `ogiri.session` subsystem.
+ *
+ * Security-sensitive defaults keep the subsystem and optional endpoints disabled, use strict
+ * cookies, and require token-hash key material before a default
+ * [com.quantipixels.ogiri.session.TokenHasher] can be created.
+ */
 @Validated
 @ConfigurationProperties("ogiri.session")
 public data class OgiriSessionProperties(
@@ -68,6 +77,7 @@ public data class OgiriSessionProperties(
     }
   }
 
+  /** Cookie attributes used when [transport] is [OgiriTransport.COOKIE]. */
   public data class Cookie(
       @field:NotBlank
       @field:Pattern(regexp = "(?:__Host-)?[!#$%&'*+.^_`|~0-9A-Za-z-]+")
@@ -87,11 +97,13 @@ public data class OgiriSessionProperties(
       get() = !name.startsWith("__Host-") || (secure && path == "/")
   }
 
+  /** HMAC key ring used to hash credential verifiers; values are Base64-encoded key bytes. */
   public data class TokenHash(
       val currentKeyId: String = "",
       val keys: Map<String, String> = emptyMap(),
   )
 
+  /** Scheduling, lease, and page-size settings for expired-session cleanup. */
   public data class Cleanup(
       val enabled: Boolean = false,
       val interval: Duration = Duration.ofHours(6),
@@ -106,6 +118,7 @@ public data class OgiriSessionProperties(
     }
   }
 
+  /** Fixed-window rate-limit settings for the optional sign-in endpoint. */
   public data class RateLimit(
       val enabled: Boolean = false,
       @field:Min(1) val signInPermits: Long = 10,
@@ -119,6 +132,7 @@ public data class OgiriSessionProperties(
     }
   }
 
+  /** Settings for the optional built-in session-management HTTP endpoints. */
   public data class Endpoints(
       val enabled: Boolean = false,
       @field:NotBlank val basePath: String = "/auth",

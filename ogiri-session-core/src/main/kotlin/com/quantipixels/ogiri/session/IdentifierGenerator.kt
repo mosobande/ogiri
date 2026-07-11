@@ -15,10 +15,13 @@ package com.quantipixels.ogiri.session
 import java.security.SecureRandom
 import java.util.UUID
 
+/** Supplies opaque identifiers for sessions, token families, and lifecycle events. */
 public fun interface IdentifierGenerator {
+  /** Returns a new identifier suitable for durable storage. */
   public fun next(): String
 }
 
+/** Generates UUID-shaped identifiers from the supplied cryptographically secure random source. */
 public class SecureRandomIdentifierGenerator(
     private val secureRandom: SecureRandom,
 ) : IdentifierGenerator {

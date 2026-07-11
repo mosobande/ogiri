@@ -14,12 +14,14 @@ package com.quantipixels.ogiri.session
 
 import java.time.Instant
 
+/** Parameters for atomically creating and admitting a session. */
 public data class CreateSessionCommand(
     public val session: StoredSession,
     public val maximumActiveSessions: Int,
     public val evictOldestWhenFull: Boolean,
 )
 
+/** Outcome of [SessionStore.create], including any session evicted to preserve the limit. */
 public sealed interface CreateSessionResult {
   public data class Created(
       public val session: StoredSession,
@@ -31,6 +33,7 @@ public sealed interface CreateSessionResult {
   public data object SelectorConflict : CreateSessionResult
 }
 
+/** Optimistic compare-and-set command for credential rotation. */
 public data class RotateSessionCommand(
     public val sessionId: SessionId,
     public val expectedVersion: Long,
@@ -40,6 +43,7 @@ public data class RotateSessionCommand(
     public val usedAt: Instant,
 )
 
+/** Outcome of [SessionStore.compareAndRotate]. */
 public sealed interface RotateSessionResult {
   public data class Rotated(public val session: StoredSession) : RotateSessionResult
 
@@ -48,6 +52,7 @@ public sealed interface RotateSessionResult {
   public data object Missing : RotateSessionResult
 }
 
+/** Parameters for idempotently revoking one session. */
 public data class RevokeSessionCommand(
     public val sessionId: SessionId,
     public val expectedVersion: Long?,
@@ -55,6 +60,7 @@ public data class RevokeSessionCommand(
     public val reason: RevocationReason,
 )
 
+/** Outcome of [SessionStore.revoke]. */
 public sealed interface RevokeSessionResult {
   public data class Revoked(public val session: StoredSession) : RevokeSessionResult
 
@@ -65,6 +71,12 @@ public sealed interface RevokeSessionResult {
   public data object Missing : RevokeSessionResult
 }
 
+/**
+ * Persistence boundary for immutable session snapshots.
+ *
+ * Implementations must make admission, rotation, and revocation atomic and must return detached
+ * snapshots that callers cannot mutate after commit.
+ */
 public interface SessionStore {
   /** Creates and admits a session atomically with the maximum-session invariant. */
   public fun create(command: CreateSessionCommand): CreateSessionResult
@@ -91,6 +103,7 @@ public interface SessionStore {
       reason: RevocationReason
   ): List<SessionId>
 
+  /** Lists sessions for [subject] that are active at [at], newest activity first. */
   public fun listActive(subject: SubjectRef, at: Instant): List<StoredSession>
 
   /** Deletes at most [limit] expired or revoked rows and commits that page independently. */

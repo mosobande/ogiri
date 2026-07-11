@@ -23,6 +23,7 @@ import jakarta.persistence.Table
 import jakarta.persistence.Version
 import java.time.Instant
 
+/** JPA persistence model for an immutable Ogiri session snapshot. */
 @Entity
 @Table(
     name = "ogiri_sessions",
@@ -88,6 +89,7 @@ public class OgiriSessionEntity(
       )
 }
 
+/** Subject-scoped lock row used to serialize active-session admission decisions across nodes. */
 @Entity
 @Table(name = "ogiri_subject_locks")
 public class OgiriSubjectLockEntity(
@@ -97,6 +99,7 @@ public class OgiriSubjectLockEntity(
   protected constructor() : this("")
 }
 
+/** Durable ownership record backing cluster-safe Ogiri maintenance-job leases. */
 @Entity
 @Table(name = "ogiri_job_leases")
 public class OgiriJobLeaseEntity(

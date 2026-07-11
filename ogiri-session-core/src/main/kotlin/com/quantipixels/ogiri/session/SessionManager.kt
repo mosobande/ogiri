@@ -17,10 +17,13 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 
+/** Determines whether a subject is currently permitted to authenticate. */
 public fun interface SubjectStatusChecker {
+  /** Returns `false` when issuance and authentication must reject [subject]. */
   public fun isAllowed(subject: SubjectRef): Boolean
 }
 
+/** Security and admission policy applied by [SessionManager]. */
 public data class SessionPolicy
 @JvmOverloads
 public constructor(
@@ -36,6 +39,7 @@ public constructor(
   }
 }
 
+/** Lifecycle action emitted after a successful session-store operation. */
 public enum class SessionEventAction {
   ISSUED,
   AUTHENTICATED,
@@ -46,6 +50,7 @@ public enum class SessionEventAction {
   EVICTED,
 }
 
+/** Immutable audit event describing a committed session lifecycle change. */
 public data class SessionEvent(
     public val eventId: String,
     public val occurredAt: Instant,
@@ -57,15 +62,24 @@ public data class SessionEvent(
     public val correlationId: String? = null,
 )
 
+/** Receives session lifecycle events after the corresponding store command succeeds. */
 public fun interface SessionEventPublisher {
   /** Called only after the store command returns successfully. */
   public fun publish(event: SessionEvent)
 }
 
+/** Event publisher used when session lifecycle events are not observed. */
 public object NoOpSessionEventPublisher : SessionEventPublisher {
   override fun publish(event: SessionEvent): Unit = Unit
 }
 
+/**
+ * Coordinates session issuance, authentication, rotation, and revocation.
+ *
+ * Credentials are split into a non-secret selector and a hashed verifier. Mutating operations use
+ * optimistic versions supplied by [SessionStore], and lifecycle events are published only after a
+ * store operation commits.
+ */
 public class SessionManager
 @JvmOverloads
 public constructor(
@@ -78,6 +92,15 @@ public constructor(
     private val events: SessionEventPublisher = NoOpSessionEventPublisher,
     private val identifiers: IdentifierGenerator = SecureRandomIdentifierGenerator(SecureRandom()),
 ) {
+  /**
+   * Issues a new session for [subject] and [client].
+   *
+   * The store atomically enforces [SessionPolicy.maximumActiveSessions]. Selector collisions are
+   * retried with freshly generated credential material.
+   *
+   * @throws SessionError.SubjectUnavailable when the subject is not allowed to authenticate
+   * @throws SessionError.SessionLimitReached when admission is full and eviction is disabled
+   */
   public fun issue(subject: SubjectRef, client: ClientContext): IssuedSession {
     if (!statusChecker.isAllowed(subject)) throw SessionError.SubjectUnavailable()
     val now = clock.instant()
@@ -122,6 +145,13 @@ public constructor(
     }
   }
 
+  /**
+   * Verifies an encoded credential and records successful use.
+   *
+   * Reusing a previous credential after its grace deadline revokes the session as token reuse.
+   *
+   * @throws SessionError for malformed, invalid, expired, revoked, or disallowed credentials
+   */
   public fun authenticate(encodedCredential: String): AuthenticatedSession {
     val decoded = decode(encodedCredential)
     val session = store.findBySelector(decoded.selector) ?: throw SessionError.InvalidCredential()
@@ -163,6 +193,11 @@ public constructor(
     return session.authenticated(usedPreviousVersion = previous)
   }
 
+  /**
+   * Replaces the verifier while retaining the same session identity and selector.
+   *
+   * @throws SessionError.Conflict when another request already rotated this version
+   */
   public fun rotate(encodedCredential: String): IssuedSession {
     val decoded = decode(encodedCredential)
     val session = store.findBySelector(decoded.selector) ?: throw SessionError.InvalidCredential()
@@ -202,6 +237,7 @@ public constructor(
     )
   }
 
+  /** Revokes the authenticated session, returning whether this call changed stored state. */
   public fun revoke(authenticated: AuthenticatedSession): Boolean {
     val now = clock.instant()
     return when (store.revoke(
@@ -238,6 +274,7 @@ public constructor(
     }
   }
 
+  /** Revokes [sessionId] only when it belongs to [subject]. */
   public fun revoke(
       subject: SubjectRef,
       sessionId: SessionId,
@@ -262,6 +299,7 @@ public constructor(
     }
   }
 
+  /** Revokes every active session for the subject except [authenticated]. */
   public fun revokeOthers(
       authenticated: AuthenticatedSession,
       reason: RevocationReason = RevocationReason.ADMINISTRATIVE,
@@ -273,6 +311,7 @@ public constructor(
           .map { it.id }
           .toList()
 
+  /** Revokes all active sessions owned by [subject] and returns their IDs. */
   public fun revokeAll(subject: SubjectRef, reason: RevocationReason): List<SessionId> {
     val now = clock.instant()
     val revoked = store.revokeAll(subject, now, reason)
@@ -282,9 +321,11 @@ public constructor(
     return revoked
   }
 
+  /** Lists active sessions for [subject] at the manager clock's current instant. */
   public fun list(subject: SubjectRef): List<StoredSession> =
       store.listActive(subject, clock.instant())
 
+  /** Deletes one bounded page of expired or revoked sessions. */
   public fun cleanupPage(limit: Int): Int {
     require(limit in 1..10_000) { "cleanup page size must be between 1 and 10000" }
     return store.deleteExpiredPage(clock.instant(), limit)
