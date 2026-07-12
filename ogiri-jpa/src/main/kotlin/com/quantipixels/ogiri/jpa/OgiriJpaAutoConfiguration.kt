@@ -41,6 +41,8 @@ public open class OgiriJpaAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean(OgiriJobLease::class)
-  public open fun ogiriJpaJobLease(entityManager: EntityManager): OgiriJobLease =
-      OgiriJpaJobLease(entityManager)
+  public open fun ogiriJpaJobLease(
+      entityManager: EntityManager,
+      transactionManager: PlatformTransactionManager,
+  ): OgiriJobLease = OgiriJpaJobLease(entityManager, transactionManager)
 }

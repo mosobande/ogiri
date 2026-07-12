@@ -188,7 +188,7 @@ public constructor(
       throw SessionError.InvalidCredential()
     }
 
-    store.recordUse(session.id, session.version, now)
+    if (!store.recordUse(session.id, session.version, now)) throw SessionError.Conflict()
     publish(now, SessionEventAction.AUTHENTICATED, session.subject, session.id, session.familyId)
     return session.authenticated(usedPreviousVersion = previous)
   }

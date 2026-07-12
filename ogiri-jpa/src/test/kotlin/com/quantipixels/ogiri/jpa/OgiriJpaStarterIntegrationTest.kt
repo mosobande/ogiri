@@ -12,17 +12,24 @@
  */
 package com.quantipixels.ogiri.jpa
 
+import com.quantipixels.ogiri.security.session.OgiriJobLease
 import com.quantipixels.ogiri.session.ClientContext
 import com.quantipixels.ogiri.session.Realm
+import com.quantipixels.ogiri.session.RevocationReason
+import com.quantipixels.ogiri.session.RevokeSessionCommand
 import com.quantipixels.ogiri.session.SessionManager
+import com.quantipixels.ogiri.session.SessionStore
 import com.quantipixels.ogiri.session.SubjectId
 import com.quantipixels.ogiri.session.SubjectRef
 import com.quantipixels.ogiri.session.TenantId
+import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -48,6 +55,8 @@ import org.springframework.security.provisioning.InMemoryUserDetailsManager
 )
 class OgiriJpaStarterIntegrationTest {
   @Autowired private lateinit var sessions: SessionManager
+  @Autowired private lateinit var store: SessionStore
+  @Autowired private lateinit var jobLease: OgiriJobLease
 
   @Test
   fun `blank consumer can issue authenticate and revoke through default JPA store`() {
@@ -60,6 +69,74 @@ class OgiriJpaStarterIntegrationTest {
     assertThrows(com.quantipixels.ogiri.session.SessionError.Revoked::class.java) {
       sessions.authenticate(encoded)
     }
+  }
+
+  @Test
+  fun `record use accepts authoritative versions without moving activity backward`() {
+    val issued =
+        sessions.issue(
+            SubjectRef(Realm("users"), SubjectId("user-42"), TenantId("record-use")),
+            ClientContext("record-use-browser"),
+        )
+    val initial = issued.session.lastUsedAt
+
+    assertTrue(store.recordUse(issued.session.id, issued.session.version, initial))
+    assertTrue(
+        store.recordUse(
+            issued.session.id,
+            issued.session.version,
+            initial.minus(Duration.ofSeconds(1)),
+        ))
+    assertEquals(initial, store.findById(issued.session.id)?.lastUsedAt)
+    assertFalse(store.recordUse(issued.session.id, issued.session.version + 1, initial))
+
+    store.revoke(
+        RevokeSessionCommand(
+            issued.session.id,
+            issued.session.version,
+            initial.plusSeconds(1),
+            RevocationReason.ADMINISTRATIVE,
+        ))
+    assertFalse(store.recordUse(issued.session.id, issued.session.version, initial.plusSeconds(2)))
+  }
+
+  @Test
+  fun `concurrent first lease acquisition creates one row and one owner`() {
+    val name = "first-lease-race-${System.nanoTime()}"
+    val now = Instant.parse("2026-01-01T00:00:00Z")
+    val ready = CountDownLatch(8)
+    val start = CountDownLatch(1)
+    val executor = Executors.newFixedThreadPool(8)
+    val outcomes =
+        try {
+          val futures =
+              List(8) { index ->
+                executor.submit(
+                    Callable {
+                      ready.countDown()
+                      start.await()
+                      runCatching {
+                        jobLease.tryAcquire(name, "owner-$index", now, now.plusSeconds(60))
+                      }
+                    })
+              }
+          assertTrue(ready.await(5, TimeUnit.SECONDS))
+          start.countDown()
+          futures.map { it.get(10, TimeUnit.SECONDS) }
+        } finally {
+          start.countDown()
+          executor.shutdownNow()
+          executor.awaitTermination(10, TimeUnit.SECONDS)
+        }
+
+    assertTrue(outcomes.all { it.isSuccess })
+    assertEquals(1, outcomes.count { it.getOrThrow() })
+    val winner = outcomes.indexOfFirst { it.getOrThrow() }.let { "owner-$it" }
+    assertTrue(jobLease.tryAcquire(name, winner, now.plusSeconds(1), now.plusSeconds(120)))
+    assertFalse(jobLease.tryAcquire(name, "successor", now.plusSeconds(2), now.plusSeconds(120)))
+    assertTrue(jobLease.tryAcquire(name, "successor", now.plusSeconds(121), now.plusSeconds(180)))
+    jobLease.release(name, winner)
+    assertFalse(jobLease.tryAcquire(name, "third", now.plusSeconds(122), now.plusSeconds(180)))
   }
 
   @Test

@@ -151,6 +151,47 @@ class SessionManagerTest {
   }
 
   @Test
+  fun `authentication fails when concurrent revocation wins final state check`() {
+    val events = mutableListOf<SessionEvent>()
+    val raceStore =
+        object : SessionStore by store {
+          override fun recordUse(
+              sessionId: SessionId,
+              expectedVersion: Long,
+              usedAt: Instant,
+          ): Boolean {
+            store.revoke(
+                RevokeSessionCommand(
+                    sessionId,
+                    expectedVersion,
+                    usedAt,
+                    RevocationReason.ADMINISTRATIVE,
+                ))
+            return false
+          }
+        }
+    val codec = OpaqueTokenCodec()
+    val raceManager =
+        SessionManager(
+            raceStore,
+            codec,
+            HmacSha256TokenHasher("race", mapOf("race" to ByteArray(32) { 9 })),
+            SubjectStatusChecker { true },
+            clock,
+            events = SessionEventPublisher(events::add),
+        )
+    val issued = raceManager.issue(subject, ClientContext("race-browser"))
+    events.clear()
+
+    assertFailsWith<SessionError.Conflict> {
+      raceManager.authenticate(issued.credential.encoded(codec))
+    }
+    assertTrue(events.none { it.action == SessionEventAction.AUTHENTICATED })
+    assertEquals(
+        RevocationReason.ADMINISTRATIVE, store.findById(issued.session.id)?.revocationReason)
+  }
+
+  @Test
   fun `issued plaintext is separate from immutable stored session`() {
     val issued = manager.issue(subject, client)
     val stored = store.findById(issued.session.id)!!

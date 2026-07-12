@@ -14,12 +14,16 @@ package com.quantipixels.ogiri.session
 
 import java.time.Instant
 
-/** Stable identifier assigned to a persisted session. */
-@JvmInline
-public value class SessionId(public val value: String) {
+/** Stable, Java-compatible identifier assigned to a persisted session. */
+public class SessionId(public val value: String) {
   init {
     require(value.isNotBlank()) { "session ID must not be blank" }
   }
+
+  public override fun equals(other: Any?): Boolean =
+      this === other || (other is SessionId && value == other.value)
+
+  public override fun hashCode(): Int = value.hashCode()
 
   public override fun toString(): String = value
 }
@@ -175,13 +179,21 @@ public data class SessionCredential(
 ) {
   /** Encodes the public selector and secret verifier for transport using [codec]. */
   public fun encoded(codec: TokenCodec): String = codec.encode(selector, verifier)
+
+  /** Returns a diagnostic representation without credential material. */
+  public override fun toString(): String =
+      "SessionCredential(sessionId=$sessionId, selector=[REDACTED], verifier=[REDACTED])"
 }
 
 /** Newly persisted session state together with the credential that authenticates it. */
 public data class IssuedSession(
     public val session: StoredSession,
     public val credential: SessionCredential,
-)
+) {
+  /** Returns a diagnostic representation without session credential material. */
+  public override fun toString(): String =
+      "IssuedSession(sessionId=${session.id}, credential=$credential)"
+}
 
 /**
  * Non-secret identity established after successful credential verification.

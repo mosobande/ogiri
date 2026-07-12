@@ -135,11 +135,12 @@ public open class OgiriJpaSessionStore(
       entityManager
           .createQuery(
               """
-              update OgiriSessionEntity s set s.lastUsedAt = :usedAt
+              update OgiriSessionEntity s
+                 set s.lastUsedAt =
+                     case when s.lastUsedAt < :usedAt then :usedAt else s.lastUsedAt end
                where s.sessionId = :sessionId
                  and s.recordVersion = :expectedVersion
                  and s.revokedAt is null
-                 and s.lastUsedAt < :usedAt
               """
                   .trimIndent())
           .setParameter("usedAt", usedAt)

@@ -22,10 +22,12 @@ ogiri:
         primary: ${OGIRI_TOKEN_HASH_KEY_BASE64}
     endpoints:
       enabled: true
+      base-path: /auth
     cleanup:
       enabled: false
       interval: 6h
       lease: 30m
+      max-run-duration: 5m
       batch-size: 500
     rate-limit:
       enabled: false
@@ -74,9 +76,11 @@ Cookie mode accepts only the configured cookie and emits no readable token heade
 
 When the application owns a `SecurityFilterChain`, apply `OgiriHttpConfigurer` to that same chain and define authorization there. When no chain exists, the optional starter permits `public-paths` and protects every other request.
 
+The optional endpoint starter uses `endpoints.base-path` as its route prefix. The value must be a canonical absolute literal path such as `/auth` or `/api/session-auth`; root, trailing slashes, duplicate separators, wildcards, variables, queries, and fragments are rejected. When changing it, update `public-paths`, gateway routes, clients, and application-owned authorization matchers to the same prefix.
+
 ## Cleanup
 
-Cleanup is disabled by default. Enabling it requires both `SessionManager` and a cluster-safe `OgiriJobLease`; otherwise startup fails. The JPA adapter supplies a database lease. Each bounded page executes through a separate store transaction, allowing safe resume after failure.
+Cleanup is disabled by default. Enabling it requires both `SessionManager` and a cluster-safe `OgiriJobLease`; otherwise startup fails. The JPA adapter safely initializes the lease row under concurrent first use, and the active owner renews the lease between independently committed pages. `max-run-duration` must be positive and shorter than `lease`; reaching it leaves the remaining backlog for a later scheduled run. Size the lease above the worst expected duration of one page, because work already executing cannot be interrupted by lease renewal.
 
 ## Distributed rate limiting
 

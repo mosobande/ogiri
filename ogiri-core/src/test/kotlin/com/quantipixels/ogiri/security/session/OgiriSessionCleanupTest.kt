@@ -17,6 +17,7 @@ import com.quantipixels.ogiri.session.HmacSha256TokenHasher
 import com.quantipixels.ogiri.session.OpaqueTokenCodec
 import com.quantipixels.ogiri.session.Realm
 import com.quantipixels.ogiri.session.SessionManager
+import com.quantipixels.ogiri.session.SessionStore
 import com.quantipixels.ogiri.session.SubjectId
 import com.quantipixels.ogiri.session.SubjectRef
 import com.quantipixels.ogiri.session.SubjectStatusChecker
@@ -64,16 +65,99 @@ class OgiriSessionCleanupTest {
     cleanup.runOnce()
 
     assertEquals(5, cleanup.status().lastDeletedRows)
+    assertEquals(3, lease.acquireAttempts)
     assertTrue(store.snapshot().isEmpty())
     assertFalse(lease.isHeld("session-cleanup"))
   }
+
+  @Test
+  fun `cleanup stops before another page when lease renewal fails`() {
+    val clock = OgiriFakeClock(Instant.parse("2026-01-01T00:00:00Z"))
+    val store = InMemorySessionStore()
+    val sessions = sessionManager(store, clock)
+    repeat(5) {
+      sessions.issue(SubjectRef(Realm("users"), SubjectId("renewal-$it")), ClientContext("client"))
+    }
+    clock.advance(Duration.ofDays(15))
+    val lease = InMemoryJobLease(maxSuccessfulAcquisitions = 1)
+    val cleanup =
+        OgiriSessionCleanupScheduler(
+            sessions,
+            lease,
+            ConcurrentTaskScheduler(),
+            clock,
+            OgiriSessionProperties.Cleanup(batchSize = 2),
+        )
+
+    cleanup.runOnce()
+
+    assertEquals(2, cleanup.status().lastDeletedRows)
+    assertEquals(3, store.snapshot().size)
+    assertEquals(2, lease.acquireAttempts)
+  }
+
+  @Test
+  fun `cleanup respects its fixed run duration before another page`() {
+    val clock = OgiriFakeClock(Instant.parse("2026-01-01T00:00:00Z"))
+    val delegate = InMemorySessionStore()
+    val timedStore =
+        object : SessionStore by delegate {
+          override fun deleteExpiredPage(before: Instant, limit: Int): Int {
+            val deleted = delegate.deleteExpiredPage(before, limit)
+            clock.advance(Duration.ofMinutes(5))
+            return deleted
+          }
+        }
+    val sessions = sessionManager(timedStore, clock)
+    repeat(5) {
+      sessions.issue(SubjectRef(Realm("users"), SubjectId("duration-$it")), ClientContext("client"))
+    }
+    clock.advance(Duration.ofDays(15))
+    val lease = InMemoryJobLease()
+    val cleanup =
+        OgiriSessionCleanupScheduler(
+            sessions,
+            lease,
+            ConcurrentTaskScheduler(),
+            clock,
+            OgiriSessionProperties.Cleanup(
+                batchSize = 2,
+                maxRunDuration = Duration.ofMinutes(5),
+            ),
+        )
+
+    cleanup.runOnce()
+
+    assertEquals(2, cleanup.status().lastDeletedRows)
+    assertEquals(3, delegate.snapshot().size)
+    assertEquals(1, lease.acquireAttempts)
+  }
+
+  private fun sessionManager(store: SessionStore, clock: OgiriFakeClock): SessionManager =
+      SessionManager(
+          store,
+          OpaqueTokenCodec(),
+          HmacSha256TokenHasher("test", mapOf("test" to ByteArray(32) { 1 })),
+          SubjectStatusChecker { true },
+          clock,
+      )
 }
 
-private class InMemoryJobLease : OgiriJobLease {
+private class InMemoryJobLease(private val maxSuccessfulAcquisitions: Int = Int.MAX_VALUE) :
+    OgiriJobLease {
   private val owners = ConcurrentHashMap<String, String>()
+  var acquireAttempts: Int = 0
+    private set
 
-  override fun tryAcquire(name: String, owner: String, now: Instant, until: Instant): Boolean =
-      owners.putIfAbsent(name, owner) == null
+  @Synchronized
+  override fun tryAcquire(name: String, owner: String, now: Instant, until: Instant): Boolean {
+    acquireAttempts += 1
+    if (acquireAttempts > maxSuccessfulAcquisitions) return false
+    val existing = owners[name]
+    if (existing != null && existing != owner) return false
+    owners[name] = owner
+    return true
+  }
 
   override fun release(name: String, owner: String) {
     owners.remove(name, owner)

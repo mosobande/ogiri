@@ -252,6 +252,15 @@ public open class OgiriSessionAutoConfiguration {
       )
 
   @Bean
+  @ConditionalOnMissingBean
+  @ConditionalOnProperty(
+      prefix = "ogiri.session.endpoints",
+      name = ["enabled"],
+      havingValue = "true",
+  )
+  public open fun ogiriProblemHandler(): OgiriProblemHandler = OgiriProblemHandler()
+
+  @Bean
   @ConditionalOnProperty(
       prefix = "ogiri.session.cleanup",
       name = ["enabled"],

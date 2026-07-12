@@ -32,8 +32,9 @@ Atomic commands:
 
 - `create` serializes admission per `realm + tenant + subject` and applies the APP-session maximum in the same transaction;
 - `compareAndRotate` updates only the expected record version and digest;
-- `revoke` and `revokeAll` operate on stable session IDs/subjects; and
-- `deleteExpiredPage` locks and deletes at most the requested page size.
+- `revoke` and `revokeAll` operate on stable session IDs/subjects;
+- `deleteExpiredPage` locks and deletes at most the requested page size; and
+- clustered cleanup initializes its lease row safely under concurrent first acquisition, renews ownership between pages, and uses owner-conditional release.
 
 The store returns immutable `StoredSession` snapshots. Plaintext verifiers are structurally absent from the entity and migration.
 

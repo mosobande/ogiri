@@ -90,7 +90,12 @@ public interface SessionStore {
   /** Compares the expected version and digest and commits exactly one successor. */
   public fun compareAndRotate(command: RotateSessionCommand): RotateSessionResult
 
-  /** Updates activity without changing credential versions or grace deadlines. */
+  /**
+   * Records activity for the expected active version without moving its timestamp backward.
+   *
+   * Returns `true` when the version is authoritative even if its stored activity is already as
+   * recent as [usedAt], or `false` when the session is missing, revoked, or changed concurrently.
+   */
   public fun recordUse(sessionId: SessionId, expectedVersion: Long, usedAt: Instant): Boolean
 
   /** Revokes one stable session identity. */

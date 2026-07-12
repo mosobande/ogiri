@@ -28,7 +28,10 @@ import org.springframework.scheduling.TaskScheduler
  * Implementations must acquire atomically and must not let one owner release another owner's lease.
  */
 public interface OgiriJobLease {
-  /** Attempts to own [name] as [owner] until [until]. */
+  /**
+   * Acquires an available lease or renews it when [owner] already holds it, extending it to
+   * [until]. Returns `false` while another owner holds an unexpired lease.
+   */
   public fun tryAcquire(name: String, owner: String, now: Instant, until: Instant): Boolean
 
   /** Releases [name] only if it is still held by [owner]. */
@@ -83,13 +86,19 @@ public class OgiriSessionCleanupScheduler(
   public fun runOnce() {
     val started = clock.instant()
     if (!lease.tryAcquire(JOB_NAME, owner, started, started.plus(properties.lease))) return
+    val deadline = started.plus(properties.maxRunDuration)
     status.set(OgiriCleanupStatus(started, null, 0, null))
     var deleted = 0
     try {
-      do {
+      while (true) {
         val page = sessions.cleanupPage(properties.batchSize)
         deleted += page
-      } while (page == properties.batchSize)
+        if (page < properties.batchSize) break
+
+        val now = clock.instant()
+        if (!now.isBefore(deadline)) break
+        if (!lease.tryAcquire(JOB_NAME, owner, now, now.plus(properties.lease))) break
+      }
       status.set(OgiriCleanupStatus(started, clock.instant(), deleted, null))
     } catch (error: RuntimeException) {
       status.set(

@@ -78,7 +78,7 @@ public data class SessionView(
 )
 
 /**
- * Optional REST controller for the complete session lifecycle under `/auth`.
+ * Optional REST controller for the complete session lifecycle under the configured endpoint path.
  *
  * The controller is created only when `ogiri.session.endpoints.enabled=true`. Credentials are
  * written through [OgiriSessionResponseWriter] and never included in response bodies.
@@ -89,7 +89,7 @@ public data class SessionView(
     havingValue = "true",
 )
 @RestController
-@RequestMapping("/auth")
+@RequestMapping("\${ogiri.session.endpoints.base-path:/auth}")
 public class OgiriSessionEndpointController(
     private val authenticationManager: AuthenticationManager,
     private val sessions: SessionManager,

@@ -108,6 +108,7 @@ public data class OgiriSessionProperties(
       val enabled: Boolean = false,
       val interval: Duration = Duration.ofHours(6),
       val lease: Duration = Duration.ofMinutes(30),
+      val maxRunDuration: Duration = Duration.ofMinutes(5),
       @field:Min(1) @field:Max(10_000) val batchSize: Int = 500,
   ) {
     init {
@@ -115,6 +116,12 @@ public data class OgiriSessionProperties(
         "ogiri.session.cleanup.interval must be positive"
       }
       require(!lease.isNegative && !lease.isZero) { "ogiri.session.cleanup.lease must be positive" }
+      require(!maxRunDuration.isNegative && !maxRunDuration.isZero) {
+        "ogiri.session.cleanup.max-run-duration must be positive"
+      }
+      require(maxRunDuration < lease) {
+        "ogiri.session.cleanup.max-run-duration must be shorter than the lease"
+      }
     }
   }
 
@@ -136,5 +143,11 @@ public data class OgiriSessionProperties(
   public data class Endpoints(
       val enabled: Boolean = false,
       @field:NotBlank val basePath: String = "/auth",
-  )
+  ) {
+    init {
+      require(basePath.matches(Regex("/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)"))) {
+        "ogiri.session.endpoints.base-path must be a canonical absolute literal path"
+      }
+    }
+  }
 }

@@ -15,6 +15,8 @@ package com.quantipixels.ogiri.session;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import org.junit.jupiter.api.Test;
 
 class JavaConsumerTest {
@@ -28,5 +30,31 @@ class JavaConsumerTest {
     assertEquals("opaque-subject", subject.subjectValue());
     assertEquals("browser", client.getClientId());
     assertEquals(3, policy.getMaximumActiveSessions());
+  }
+
+  @Test
+  void sessionIdentifiersAreOrdinaryJavaValues() {
+    SessionId first = new SessionId("session-1");
+    SessionId second = new SessionId("session-1");
+    HashMap<SessionId, String> values = new HashMap<>();
+    values.put(first, "value");
+
+    assertEquals("session-1", first.getValue());
+    assertEquals("session-1", first.toString());
+    assertEquals(first, second);
+    assertEquals("value", values.get(second));
+  }
+
+  private static void compileJavaSessionApi(
+      SessionStore store,
+      SessionId sessionId,
+      StoredSession stored,
+      SessionCredential credential,
+      AuthenticatedSession authenticated) {
+    store.findById(sessionId);
+    store.recordUse(sessionId, 0, Instant.EPOCH);
+    stored.getId();
+    credential.getSessionId();
+    authenticated.getSessionId();
   }
 }
