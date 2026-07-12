@@ -78,7 +78,7 @@ class OgiriJpaStarterIntegrationTest {
             SubjectRef(Realm("users"), SubjectId("user-42"), TenantId("record-use")),
             ClientContext("record-use-browser"),
         )
-    val initial = issued.session.lastUsedAt
+    val initial = store.findById(issued.session.id)!!.lastUsedAt
 
     assertTrue(store.recordUse(issued.session.id, issued.session.version, initial))
     assertTrue(
