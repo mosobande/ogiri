@@ -1,0 +1,74 @@
+plugins {
+  `java-platform`
+  `maven-publish`
+  signing
+}
+
+group = "com.quantipixels.ogiri"
+
+javaPlatform { allowDependencies() }
+
+dependencies {
+  constraints {
+    api(project(":ogiri-session-core"))
+    api(project(":ogiri-core"))
+    api(project(":ogiri-jpa"))
+    api(project(":ogiri-jdbc"))
+    api(project(":ogiri-caffeine"))
+    api(project(":ogiri-redis"))
+    api(project(":ogiri-test"))
+  }
+}
+
+publishing {
+  publications {
+    create<MavenPublication>("mavenJava") {
+      from(components["javaPlatform"])
+      pom {
+        name.set("ogiri-bom")
+        description.set("Dependency alignment platform for all supported Ogiri modules.")
+        url.set("https://github.com/quantipixels/ogiri")
+        licenses {
+          license {
+            name.set("Apache License 2.0")
+            url.set("https://www.apache.org/licenses/LICENSE-2.0")
+          }
+        }
+        developers {
+          developer {
+            id.set("quantipixels")
+            name.set("Olúwaṣèyí Ṣóbandé")
+            email.set("oluwaseyi@quantipixels.com")
+          }
+        }
+        scm {
+          url.set("https://github.com/quantipixels/ogiri")
+          connection.set("scm:git:https://github.com/quantipixels/ogiri.git")
+          developerConnection.set("scm:git:ssh://git@github.com/quantipixels/ogiri.git")
+        }
+      }
+    }
+  }
+  repositories {
+    maven {
+      name = "CentralPortal"
+      val releasesUrl =
+          uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+      val snapshotsUrl = uri("https://central.sonatype.com/repository/maven-snapshots/")
+      url = if (version.toString().endsWith("SNAPSHOT")) snapshotsUrl else releasesUrl
+      credentials {
+        username = (findProperty("ossrhUsername") ?: System.getenv("OSSRH_USERNAME"))?.toString()
+        password = (findProperty("ossrhPassword") ?: System.getenv("OSSRH_PASSWORD"))?.toString()
+      }
+    }
+  }
+}
+
+signing {
+  val key = (findProperty("signing.key") ?: System.getenv("GPG_PRIVATE_KEY"))?.toString()
+  val password = (findProperty("signing.password") ?: System.getenv("GPG_PASSPHRASE"))?.toString()
+  if (key != null && password != null) {
+    useInMemoryPgpKeys(key, password)
+    sign(publishing.publications["mavenJava"])
+  }
+}

@@ -153,15 +153,16 @@ RELEASE_VERSION=1.0.2 ./gradlew build
 Push a git tag to trigger the release workflow:
 
 ```bash
-# 1. Update version in settings.gradle.kts
-# 2. Update changelog.md
+# 1. Update version in .ogiri-version
+# 2. Update CHANGELOG.md
 # 3. Commit changes
-git add settings.gradle.kts docs/changelog.md
-git commit -m "chore: bump version to 1.0.2"
+RELEASE_VERSION="$(tr -d '[:space:]' < .ogiri-version)"
+git add .ogiri-version CHANGELOG.md
+git commit -m "chore: bump version to ${RELEASE_VERSION}"
 
 # 4. Create and push tag
-git tag v1.0.2
-git push origin main v1.0.2
+git tag "v${RELEASE_VERSION}"
+git push origin ori "v${RELEASE_VERSION}"
 ```
 
 GitHub Actions will:
@@ -173,47 +174,57 @@ GitHub Actions will:
 
 ### CI/CD Workflows
 
-| Workflow       | Trigger        | Purpose                  |
-| -------------- | -------------- | ------------------------ |
-| `build.yml`    | All pushes     | Compile modules          |
-| `test.yml`     | All pushes     | Run tests with coverage  |
-| `lint.yml`     | All pushes     | Verify formatting        |
-| `release.yml`  | Tag `v*.*.*`   | Publish to Maven Central |
-| `snapshot.yml` | Push to `main` | Deploy snapshots         |
+| Workflow       | Trigger       | Purpose                  |
+| -------------- | ------------- | ------------------------ |
+| `build.yml`    | All pushes    | Compile modules          |
+| `test.yml`     | All pushes    | Run tests with coverage  |
+| `lint.yml`     | All pushes    | Verify formatting        |
+| `release.yml`  | Tag `v*.*.*`  | Publish to Maven Central |
+| `snapshot.yml` | Push to `ori` | Deploy snapshots         |
 
 ### Required Secrets
 
 Configure in GitHub repository settings:
 
-| Secret            | Purpose                |
-| ----------------- | ---------------------- |
-| `OSSRH_USERNAME`  | Sonatype username      |
-| `OSSRH_PASSWORD`  | Sonatype password      |
-| `GPG_KEY_ID`      | GPG key ID             |
-| `GPG_PASSPHRASE`  | GPG passphrase         |
-| `GPG_PRIVATE_KEY` | Base64-encoded GPG key |
+| Secret            | Purpose                       |
+| ----------------- | ----------------------------- |
+| `OSSRH_USERNAME`  | Central Portal token username |
+| `OSSRH_PASSWORD`  | Central Portal token password |
+| `GPG_PASSPHRASE`  | GPG passphrase                |
+| `GPG_PRIVATE_KEY` | ASCII-armored GPG private key |
 
 Export GPG key:
 
 ```bash
-gpg --export-secret-key <KEY_ID> | base64
+export KEY_ID=your_gpg_key_id
+gpg --armor --export-secret-keys "$KEY_ID"
 ```
 
 ### Manual Release (Not Recommended)
 
 ```bash
-export OSSRH_USERNAME=your_username
-export OSSRH_PASSWORD=your_password
-./gradlew test
-./gradlew publish -Psigning.gnupg.executable=gpg
+export RELEASE_VERSION="$(tr -d '[:space:]' < .ogiri-version)"
+export OSSRH_USERNAME=your_portal_token_username
+export OSSRH_PASSWORD=your_portal_token_password
+export KEY_ID=your_gpg_key_id
+export GPG_PRIVATE_KEY="$(gpg --armor --export-secret-keys "$KEY_ID")"
+export GPG_PASSPHRASE=your_gpg_passphrase
+
+./gradlew clean check publish
+authorization="$(printf '%s:%s' "$OSSRH_USERNAME" "$OSSRH_PASSWORD" | base64 | tr -d '\n')"
+curl \
+  --fail \
+  --request POST \
+  --header "Authorization: Bearer $authorization" \
+  "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/com.quantipixels?publishing_type=automatic"
 ```
 
 ### Release Checklist
 
 - [ ] Tests pass: `./gradlew test`
 - [ ] Formatting verified: `./gradlew spotlessCheck`
-- [ ] changelog.md updated
-- [ ] Version updated in `settings.gradle.kts`
+- [ ] `CHANGELOG.md` updated
+- [ ] Version updated in `.ogiri-version`
 - [ ] Tag created and pushed
 - [ ] CI workflow completed
 

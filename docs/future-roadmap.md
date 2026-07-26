@@ -11,6 +11,35 @@ These complete the persistence, testing, and authorization stories that are alre
 
 ---
 
+## R14: Enforce Authenticated Codecov Uploads
+
+Client and backend coverage uploads are optional until the repository has a supported Codecov
+authentication method. Configure either a `CODECOV_TOKEN` GitHub Actions secret or Codecov OIDC.
+Then restore `fail_ci_if_error: true` in both coverage workflows.
+
+Completion requires a current-head pull request run in which the backend and client coverage files
+upload successfully and Codecov reports both flags.
+
+**Impact**: Restores coverage publication as an enforced CI check
+**Effort**: Low — repository authentication and two workflow settings
+
+---
+
+## R15: Activate and Prove Maven Central Publishing
+
+Configure the Central Portal token and GPG signing secrets documented in `docs/development.md`.
+Then publish the next intended release through `release.yml`. Confirm that every module listed by
+the workflow resolves from Maven Central with the release tag version.
+
+Do not test this process with a disposable release version. Maven Central releases are immutable.
+Use local publication checks before the real tag, then use the workflow's resolution checks as the
+production proof.
+
+**Impact**: Makes signed Maven Central releases operational and repeatable
+**Effort**: Low-Medium — repository secrets, Central Portal access, and one observed release
+
+---
+
 ## R1: ogiri-jpa Default Repository
 
 Provide an intermediate JPA repository with optimized `@Query` annotations so users don't have to

@@ -33,6 +33,7 @@ dependencyManagement {
 
 dependencies {
   api(project(":ogiri-core"))
+  api(project(":ogiri-session-core"))
   api("org.springframework.boot:spring-boot-starter-data-jpa")
 
   testImplementation("org.springframework.boot:spring-boot-starter-test") {
@@ -124,9 +125,10 @@ publishing {
   }
   repositories {
     maven {
-      name = "OSSRH"
-      val releasesUrl = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
-      val snapshotsUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+      name = "CentralPortal"
+      val releasesUrl =
+          uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+      val snapshotsUrl = uri("https://central.sonatype.com/repository/maven-snapshots/")
       url = if (version.toString().endsWith("SNAPSHOT")) snapshotsUrl else releasesUrl
       credentials {
         username = (findProperty("ossrhUsername") ?: System.getenv("OSSRH_USERNAME"))?.toString()

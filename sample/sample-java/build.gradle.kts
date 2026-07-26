@@ -27,8 +27,9 @@ dependencies {
 
   // Database drivers
   runtimeOnly("com.h2database:h2:2.4.240")
-  runtimeOnly("org.postgresql:postgresql:42.7.8")
+  runtimeOnly("org.postgresql:postgresql:42.7.13")
 
+  testImplementation(project(":ogiri-test"))
   testImplementation("org.springframework.boot:spring-boot-starter-test") {
     exclude(module = "mockito-core")
   }

@@ -1,170 +1,104 @@
-# Ògiri
+# Ogiri
 
-[![Test](https://github.com/quantipixels/ogiri/actions/workflows/test.yml/badge.svg)](https://github.com/quantipixels/ogiri/actions/workflows/test.yml)
-[![Build](https://github.com/quantipixels/ogiri/actions/workflows/build.yml/badge.svg)](https://github.com/quantipixels/ogiri/actions/workflows/build.yml)
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.quantipixels.ogiri/ogiri-core/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.quantipixels.ogiri/ogiri-core)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Java](https://img.shields.io/badge/java-17+-blue.svg)](https://www.oracle.com/java/technologies/javase/jdk17-archive.html)
-[![Spring Boot](https://img.shields.io/badge/spring%20boot-3.5+-green.svg)](https://spring.io/projects/spring-boot)
-
-Reusable Spring Boot security components for token-based authentication with pluggable sub-tokens.
-
-**[📖 Full Documentation](https://quantipixels.github.io/ogiri/)** | [Quickstart](https://quantipixels.github.io/ogiri/quickstart/) | [Migration Guide](https://quantipixels.github.io/ogiri/migration-guide/)
+Ogiri is a Spring Boot library for secure, database-backed opaque sessions. It provides a persistence-neutral session core, Spring Security integration, JPA storage, optional HTTP endpoints, distributed sign-in throttling, and test fixtures.
 
 ## Features
 
-- **Database-agnostic** - Works with JPA, MongoDB, Redis, or any custom persistence
-- **Auto-configured** - Spring Boot auto-configuration with customization options
-- **Token rotation** - Configurable rotation with batch request detection
-- **Sub-tokens** - Pluggable sub-tokens for chat, device, API, etc.
-- **Secure by default** - BCrypt hashing, timestamp validation, grant-based authorization
+- Selector/verifier credentials with digest-only persistence
+- Immediate revocation against an authoritative session store
+- Atomic credential rotation with bounded previous-token grace
+- Session limits, listing, sign-out, and per-session revocation
+- Bearer, secure cookie, and devise-token-auth compatibility transports
+- Consumer-owned Spring Security authorization
+- Drop-in JPA persistence and clustered cleanup leases
+- Optional Redis-backed distributed sign-in throttling
+- Java-friendly APIs and reusable in-memory test support
+- Spring Boot metrics, health indicators, and RFC 9457 errors
 
-## Installation
+Ogiri v4 supports Java 17, Spring Boot 3.5, and servlet applications.
 
-### Server (Kotlin/Java)
+## Modules
 
-> See the Maven Central badge above for the latest version. Replace `VERSION` in all snippets below.
+| Module               | Purpose                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `ogiri-session-core` | Spring-free session state machine and store contract                |
+| `ogiri-core`         | Spring Security, transport, endpoint, and observability integration |
+| `ogiri-jpa`          | Default JPA session store and database lease implementation         |
+| `ogiri-redis`        | Distributed sign-in rate limiter                                    |
+| `ogiri-test`         | In-memory store, fake clock, and test helpers                       |
+| `ogiri-bom`          | Aligned dependency versions for all Ogiri modules                   |
 
-**With JPA Support (Recommended):**
+## Install
 
-```kotlin
-// See badge above for latest version
-implementation("com.quantipixels.ogiri:ogiri-jpa:VERSION")
-```
-
-**With JDBC Support (no ORM):**
-
-```kotlin
-// See badge above for latest version
-implementation("com.quantipixels.ogiri:ogiri-jdbc:VERSION")
-```
-
-**Core Only (Custom Persistence):**
-
-```kotlin
-// See badge above for latest version
-implementation("com.quantipixels.ogiri:ogiri-core:VERSION")
-```
-
-**Optional lookup caches:**
+Use the BOM and select the adapters your application needs:
 
 ```kotlin
-// See badge above for latest version
-implementation("com.quantipixels.ogiri:ogiri-caffeine:VERSION") // in-process
-implementation("com.quantipixels.ogiri:ogiri-redis:VERSION")    // distributed
-```
+dependencies {
+  implementation(platform("com.quantipixels.ogiri:ogiri-bom:VERSION"))
+  implementation("com.quantipixels.ogiri:ogiri-jpa")
 
-**Maven (JPA):**
+  implementation("org.flywaydb:flyway-core")
+  runtimeOnly("org.flywaydb:flyway-database-postgresql")
+  runtimeOnly("org.postgresql:postgresql")
 
-```xml
-<!-- See badge above for latest version -->
-<dependency>
-  <groupId>com.quantipixels.ogiri</groupId>
-  <artifactId>ogiri-jpa</artifactId>
-  <version>VERSION</version>
-</dependency>
-```
-
-**Requirements:** Java 17+, Spring Boot 3.5+
-
-## Quick Start
-
-**1. Implement user directory:**
-
-Connect your user database by implementing `OgiriUserDirectory`. Note that `loadUserByUsername` is inherited from Spring Security's `UserDetailsService` and must throw `UsernameNotFoundException` if the user does not exist.
-
-```kotlin
-@Component
-class MyUserDirectory(private val userService: UserService) : OgiriUserDirectory {
-  override fun findById(id: Long): OgiriUser? = userService.getById(id)
-  override fun findByUsername(username: String): OgiriUser? = userService.getByUsername(username)
-  override fun findByEmail(email: String): OgiriUser? = userService.getByEmail(email)
-
-  override fun loadUserByUsername(username: String): OgiriUser =
-      userService.getByUsername(username) ?: throw UsernameNotFoundException("User not found: $username")
-
-  override fun recordSuccessfulLogin(userId: Long) { userService.recordLogin(userId) }
+  testImplementation("com.quantipixels.ogiri:ogiri-test")
 }
 ```
 
-**2. Declare public routes:**
+Add `com.quantipixels.ogiri:ogiri-redis` when distributed rate limiting is required.
 
-```kotlin
-@Component
-class MyRouteRegistry : OgiriRouteRegistry {
-  override fun routes() = listOf(OgiriRoute.post("/api/auth/**"), OgiriRoute.get("/api/health"))
-}
+## Configure
+
+Ogiri is opt-in. Supply a `UserDetailsService` or `SubjectStatusChecker`, then configure a Base64-encoded key containing at least 32 random bytes:
+
+```yaml
+ogiri:
+  session:
+    enabled: true
+    transport: bearer
+    token-hash:
+      current-key-id: primary
+      keys:
+        primary: ${OGIRI_TOKEN_HASH_KEY_BASE64}
+    endpoints:
+      enabled: true
+      base-path: /auth
 ```
 
-**3. Extend `OgiriTokenService` with your token type:**
+Generate key material outside source control, for example:
 
-```kotlin
-@Service
-class MyTokenService(
-    repository: MyTokenRepository,       // your concrete Spring Data repository
-    passwordEncoder: PasswordEncoder,
-    userDirectory: OgiriUserDirectory,
-    identifierPolicy: IdentifierPolicy,
-    subTokenRegistry: OgiriSubTokenRegistry,
-    properties: OgiriConfigurationProperties,
-) : OgiriTokenService<MyToken>(
-    repository, passwordEncoder, userDirectory,
-    identifierPolicy, subTokenRegistry, properties,
-) {
-  override fun tokenFactory(...): MyToken = MyToken().apply { /* set fields */ }
-}
+```bash
+openssl rand -base64 32
 ```
 
-Optional extension points (`OgiriAuditHook`, `OgiriRateLimitHook`, `OgiriTokenLookupCache`) are wired automatically via setter injection when the corresponding beans are present — no constructor changes needed.
+When the application defines a `SecurityFilterChain`, apply `OgiriHttpConfigurer` to that same chain so authentication and authorization remain together.
 
-**4. Issue tokens on login:**
+## Use
 
 ```kotlin
-@PostMapping("/api/auth/login")
-fun login(@RequestBody request: LoginRequest, response: HttpServletResponse) {
-  val user = authenticate(request.username, request.password)
-  response.appendAuthHeaders(tokenService.createNewAuthToken(user.id, "web"))
-}
+val subject = OgiriSessions.subject("users", "opaque-user-id", "tenant-a")
+val client = OgiriSessions.client("browser-id", "Work laptop")
+
+val issued = sessions.issue(subject, client)
+val authenticated = sessions.authenticate(issued.credential.encoded(codec))
+sessions.revoke(authenticated)
 ```
 
-Done! Ògiri auto-configures the security filter chain.
-
-See the [full Quickstart Guide](https://quantipixels.github.io/ogiri/quickstart/) for complete examples in both Kotlin and Java.
+The optional endpoint starter provides sign-in, refresh, sign-out, current-session, session-listing, and revocation routes under the configured base path.
 
 ## Documentation
 
-| Topic                                                                                     | Description                                |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------ |
-| [Quickstart](https://quantipixels.github.io/ogiri/quickstart/)                            | 5-minute integration guide                 |
-| [Interface Design](https://quantipixels.github.io/ogiri/core-concepts/interface-design/)  | Architecture and design philosophy         |
-| [Configuration](https://quantipixels.github.io/ogiri/guides/configuration/)               | Token rotation, cleanup, batch windows     |
-| [Database Integration](https://quantipixels.github.io/ogiri/guides/database-integration/) | JPA, JDBC, MongoDB, Redis examples         |
-| [Sub-tokens](https://quantipixels.github.io/ogiri/guides/sub-tokens/)                     | Device, chat, API tokens                   |
-| [Authentication Flow](https://quantipixels.github.io/ogiri/guides/authentication-flow/)   | Request lifecycle, headers                 |
-| [Migration Guide](https://quantipixels.github.io/ogiri/guides/migration-guide/)           | Upgrade guide (see docs for version notes) |
-| [Sample Applications](https://github.com/quantipixels/ogiri/tree/main/sample)             | Java and Kotlin examples                   |
+- [Quickstart](docs/quickstart.md)
+- [Authentication and endpoint behavior](docs/authentication.md)
+- [Configuration reference](docs/configuration.md)
+- [Database integration and custom stores](docs/database.md)
+- [Security model](SECURITY.md)
+- [Development guide](docs/development.md)
 
-## Development
-
-**Requirements:** Java 17 (Java 25 is not supported — Kotlin compiler and Spotless/google-java-format incompatibilities).
-
-**Kotlin/Java:**
+## Build
 
 ```bash
-./gradlew build                  # Build and test all modules
-./gradlew test                   # Run tests only
-./gradlew :ogiri-core:test       # Run core module tests only
-./gradlew spotlessApply          # Format code
+./gradlew check
 ```
 
-**Git hooks (optional):**
-
-```bash
-lefthook install
-```
-
-See [development guide](https://quantipixels.github.io/ogiri/contributing/development-guide/) for contributor guidelines.
-
-## License
-
-Apache License 2.0 - See [LICENSE](LICENSE) for details.
+Licensed under Apache-2.0.

@@ -35,6 +35,7 @@ import com.quantipixels.ogiri.security.web.OgiriAuthenticationEntryPoint
 import com.quantipixels.ogiri.security.web.OgiriTokenAuthenticationFilter
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
@@ -277,6 +278,7 @@ class OgiriSecurityAutoConfiguration {
   fun ogiriTokenAuthenticationFilter(
       ogiriUserDirectory: OgiriUserDirectory,
       tokenServiceResolver: OgiriTokenServiceResolver,
+      @Qualifier("ogiriAuthenticationEntryPoint")
       authenticationEntryPoint: AuthenticationEntryPoint,
       authenticationBypassDecider: AuthenticationBypassDecider,
       identifierPolicy: IdentifierPolicy,
@@ -340,6 +342,7 @@ class OgiriSecurityAutoConfiguration {
   fun ogiriSecurityFilterChain(
       http: HttpSecurity,
       ogiriTokenAuthenticationFilter: OgiriTokenAuthenticationFilter,
+      @Qualifier("ogiriAuthenticationEntryPoint")
       authenticationEntryPoint: AuthenticationEntryPoint,
       properties: OgiriConfigurationProperties,
   ): SecurityFilterChain =

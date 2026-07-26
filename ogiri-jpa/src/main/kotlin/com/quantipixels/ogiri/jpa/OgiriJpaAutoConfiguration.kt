@@ -12,35 +12,37 @@
  */
 package com.quantipixels.ogiri.jpa
 
-import com.quantipixels.ogiri.security.config.OgiriSecurityAutoConfiguration
-import org.springframework.boot.autoconfigure.AutoConfigureAfter
+import com.quantipixels.ogiri.security.session.OgiriJobLease
+import com.quantipixels.ogiri.security.session.OgiriSessionAutoConfiguration
+import com.quantipixels.ogiri.session.SessionStore
+import jakarta.persistence.EntityManager
+import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
-import org.springframework.context.annotation.Configuration
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Import
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.transaction.PlatformTransactionManager
 
-/**
- * Auto-configuration for Ogiri JPA support.
- *
- * This configuration is automatically loaded when:
- * - Spring Data JPA is on the classpath (JpaRepository class present)
- * - After OgiriSecurityAutoConfiguration has been processed
- *
- * Users should create:
- * - Token entity extending [OgiriBaseTokenEntity]
- * - Repository interface extending both JpaRepository and OgiriTokenRepository
- *
- * Example:
- * ```kotlin
- * @Repository
- * interface MyTokenRepository :
- *     JpaRepository<MyToken, Long>,
- *     OgiriTokenRepository<MyToken>
- * ```
- *
- * Spring Data automatically generates all query implementations when method names follow Spring
- * Data naming conventions.
- */
-@Configuration
+@AutoConfiguration(
+    after = [HibernateJpaAutoConfiguration::class],
+    before = [OgiriSessionAutoConfiguration::class],
+)
 @ConditionalOnClass(JpaRepository::class)
-@AutoConfigureAfter(OgiriSecurityAutoConfiguration::class)
-class OgiriJpaAutoConfiguration
+@Import(OgiriJpaEntityScanRegistrar::class)
+public open class OgiriJpaAutoConfiguration {
+  @Bean
+  @ConditionalOnMissingBean(SessionStore::class)
+  public open fun ogiriJpaSessionStore(
+      entityManager: EntityManager,
+      transactionManager: PlatformTransactionManager,
+  ): SessionStore = OgiriJpaSessionStore(entityManager, transactionManager)
+
+  @Bean
+  @ConditionalOnMissingBean(OgiriJobLease::class)
+  public open fun ogiriJpaJobLease(
+      entityManager: EntityManager,
+      transactionManager: PlatformTransactionManager,
+  ): OgiriJobLease = OgiriJpaJobLease(entityManager, transactionManager)
+}

@@ -9,134 +9,137 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-      packages: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Update version file
-        run: |
-          git fetch origin ori
-          git checkout -B ori origin/ori
-          echo "${{ steps.version.outputs.VERSION }}" > .ogiri-version
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add .ogiri-version
-          git commit -m "chore: update version to ${{ steps.version.outputs.VERSION }}" || true
-          git push origin ori
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          java-version: 17
-          distribution: "temurin"
-          cache: gradle
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.VERSION }}
-          name: Release ${{ steps.version.outputs.VERSION }}
-          body: |
-            ## Release ${{ steps.version.outputs.VERSION }}
-
-            ### Artifacts
-            Published to Maven Central:
-            - `com.quantipixels.ogiri:ogiri-core:${{ steps.version.outputs.VERSION }}`
-            - `com.quantipixels.ogiri:ogiri-jpa:${{ steps.version.outputs.VERSION }}`
-
-            ### Installation
-
-            **With JPA Support (Recommended):**
-            ```gradle
-            implementation 'com.quantipixels.ogiri:ogiri-jpa:${{ steps.version.outputs.VERSION }}'
-            ```
-
-            **Core Only:**
-            ```gradle
-            implementation 'com.quantipixels.ogiri:ogiri-core:${{ steps.version.outputs.VERSION }}'
-            ```
-
-            For details, see [Changelog](https://quantipixels.github.io/ogiri/changelog/) and [Documentation](https://quantipixels.github.io/ogiri/).
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: write
-      packages: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: Checkout immutable tag
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
           java-version: 17
-          distribution: "temurin"
+          distribution: temurin
           cache: gradle
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Verify source, tests, coverage, consumers, and dependencies
+        run: ./gradlew clean check dependencyCheckAnalyze --no-daemon
 
-      - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v6
+      - name: Stage every publication locally
+        run: ./gradlew publishToMavenLocal --no-daemon
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout immutable tag
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
+        with:
+          java-version: 17
+          distribution: temurin
+          cache: gradle
+
+      - name: Extract immutable tag version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Central Portal and signing secrets
+        shell: bash
+        env:
+          CENTRAL_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for name in CENTRAL_USERNAME CENTRAL_PASSWORD GPG_PRIVATE_KEY GPG_PASSPHRASE; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required release secret is missing: $name"
+              exit 1
+            fi
+          done
+
+      - name: Import signing key
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Publish to Maven Central
+      - name: Publish signed artifacts
         run: ./gradlew publish --no-daemon
         env:
-          RELEASE_VERSION: ${{ steps.version.outputs.VERSION }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
           ORG_GRADLE_PROJECT_ossrhUsername: ${{ secrets.OSSRH_USERNAME }}
           ORG_GRADLE_PROJECT_ossrhPassword: ${{ secrets.OSSRH_PASSWORD }}
           ORG_GRADLE_PROJECT_signing.key: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signing.password: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Verify published artifact
+      - name: Transfer deployment to Central Portal
+        shell: bash
+        env:
+          CENTRAL_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          URL="https://repo1.maven.org/maven2/com/quantipixels/ogiri/ogiri-core/${VERSION}/ogiri-core-${VERSION}.jar"
-          MAX_RETRIES=10
-          RETRY_INTERVAL=60
+          set -euo pipefail
+          authorization="$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 | tr -d '\n')"
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --request POST \
+            --header "Authorization: Bearer $authorization" \
+            "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/com.quantipixels?publishing_type=automatic"
 
-          echo "Verifying artifact availability at: $URL"
-
-          for i in $(seq 1 $MAX_RETRIES); do
-            if curl -sfI "$URL" > /dev/null; then
-              echo "Artifact verified on Maven Central"
-              exit 0
-            fi
-
-            echo "Attempt $i/$MAX_RETRIES: Artifact not yet available. Retrying in ${RETRY_INTERVAL}s..."
-            sleep $RETRY_INTERVAL
+      - name: Verify every published module resolves
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ steps.version.outputs.version }}'
+          modules=(ogiri-bom ogiri-session-core ogiri-core ogiri-jpa ogiri-jdbc ogiri-caffeine ogiri-redis ogiri-test)
+          for attempt in $(seq 1 15); do
+            missing=0
+            for module in "${modules[@]}"; do
+              url="https://repo1.maven.org/maven2/com/quantipixels/ogiri/${module}/${version}/${module}-${version}.pom"
+              curl --fail --silent --show-error --head "$url" >/dev/null || missing=1
+            done
+            if [ "$missing" -eq 0 ]; then exit 0; fi
+            sleep 60
           done
-
-          echo "::error::Artifact not available on Maven Central after $((MAX_RETRIES * RETRY_INTERVAL / 60)) minutes."
+          echo "::error::Not every module resolved from Maven Central"
           exit 1
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Create release after artifact verification
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          name: Release ${{ needs.publish.outputs.version }}
+          draft: false
+          prerelease: false
 
   deploy-docs:
     needs: release
@@ -144,30 +147,26 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout immutable tag
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-          cache: "pip"
+          cache: pip
 
       - run: pip install -e .
 
-      - run: |
+      - name: Deploy versioned documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          minor="$(printf '%s' "${GITHUB_REF_NAME#v}" | grep -oE '^[0-9]+\.[0-9]+')"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Extract minor version
-        id: version
-        run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
-          echo "MINOR=$(echo "$TAG" | grep -oE '^[0-9]+\.[0-9]+')" >> $GITHUB_OUTPUT
-
-      - name: Deploy versioned docs
-        run: |
-          mike deploy --push --update-aliases "${{ steps.version.outputs.MINOR }}" latest
+          mike deploy --push --update-aliases "$minor" latest
           mike set-default --push latest

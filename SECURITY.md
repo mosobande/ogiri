@@ -1,222 +1,81 @@
 # Security Policy
 
-## Reporting Security Vulnerabilities
+## Supported versions
 
-If you discover a security vulnerability in the **ogiri** project, please report it responsibly. We appreciate your help in improving our security posture.
+| Line            | Security fixes                                               |
+| --------------- | ------------------------------------------------------------ |
+| 4.x             | Supported                                                    |
+| 3.x             | Critical fixes only during the published v4 migration window |
+| 2.x and earlier | Unsupported                                                  |
 
-### How to Report
+A release line becomes unsupported when the next major version has been generally available for 12 months. The release notes will announce the exact final support date.
 
-**Please do NOT open a public GitHub issue for security vulnerabilities.**
+## Private reporting
 
-Instead, please report security vulnerabilities privately by emailing:
+Do not open a public issue for a suspected vulnerability.
 
-- **Primary Contact:** Project Maintainers
-- **Subject:** `[SECURITY] Vulnerability Report - ogiri`
+1. Prefer GitHub private vulnerability reporting for `quantipixels/ogiri`.
+2. If private reporting is unavailable, email **oluwaseyi@quantipixels.com** with subject `[SECURITY] Ogiri vulnerability`.
+3. Include the affected version/commit, affected module, reproduction, impact, and any proposed mitigation. Do not include real credentials, personal data, or production database contents.
 
-Include the following information in your report:
+Response targets:
 
-1. **Description** of the vulnerability
-2. **Affected Component** (e.g., OgiriTokenService, OgiriTokenAuthenticationFilter, OgiriTokenRepository)
-3. **Affected Version(s)** (version tag or commit hash)
-4. **Steps to Reproduce** (if possible)
-5. **Impact Assessment** (low, medium, high, critical)
-6. **Suggested Fix** (if available)
+- Acknowledge within 2 business days.
+- Provide an initial severity and remediation plan within 7 days.
+- Target a patch within 30 days for confirmed high/critical issues.
+- Coordinate disclosure after supported releases and migration guidance are available.
 
-### Response Timeline
+If the report exposes active exploitation or leaked credentials, state that clearly in the subject and revoke the credentials immediately.
 
-We follow this responsible disclosure timeline:
+## v4 security contract
 
-- **24 hours:** Acknowledgment of receipt
-- **7 days:** Initial assessment and communication about next steps
-- **30 days:** Target for patch development and testing
-- **60 days:** Public disclosure (either when patch is released or as agreed)
+### Credential and storage model
 
-If you don't receive a response within 24 hours, please follow up via GitHub issue mentioning you have a security concern waiting for response.
+- Session credentials are opaque `selector.verifier` values. The selector is an indexed, non-secret routing identifier; the 256-bit verifier is secret.
+- Stores persist only keyed HMAC digests. `IssuedSession.credential` is separate from immutable `StoredSession` and is the only core result containing plaintext.
+- HMAC keys are externally supplied, at least 256 bits, identified by key ID, and may overlap during rotation. Password encoders are not used for bearer credentials.
+- The authoritative `SessionStore` is consulted for authentication and revocation. Cache availability or stale cache data must never restore a revoked session.
 
----
+### Rotation and revocation
 
-## Known Security Considerations
+- A session accepts the current verifier and, only during compatibility grace, one previous verifier.
+- `previousValidUntil` is fixed by the successful compare-and-rotate command. Activity updates cannot extend it.
+- Rotation is optimistic compare-and-swap. Exactly one concurrent successor commits; losing callers receive a conflict and never receive a dead credential.
+- Reuse of the known previous verifier after its fixed deadline revokes the session family.
+- Logout binds to the stable authenticated session ID. User-wide and account-state revocation are immediate at the authoritative store.
 
-### Token Storage
+### Spring Security and transport
 
-**Important:** This library provides token management, but security depends on proper usage:
+- Authentication and authorization must be composed in one selected `SecurityFilterChain`.
+- The optional starter chain permits only explicit `ogiri.session.public-paths` and ends with `anyRequest().authenticated()`.
+- Bearer is the default v4 transport. Cookie and devise-token-auth compatibility are explicit, mutually exclusive profiles.
+- Cookie mode uses `HttpOnly`, `Secure`, `SameSite`, aligned path/expiry, and CSRF protection by default. `SameSite=None` without `Secure` is rejected.
+- Credential and authentication-error responses use `Cache-Control: no-store`; bearer failures include `WWW-Authenticate` metadata.
+- Proxies must redact `Authorization`, `access-token`, cookies, and request bodies containing passwords. TLS is required outside isolated local development.
 
-1. **Never store plaintext tokens** – Always hash tokens before storing (BCrypt recommended)
-2. **Always use HTTPS/TLS** – Token transmission must occur over encrypted channels
-3. **Token expiration** – Implement appropriate token TTL based on your security requirements
-4. **Token rotation** – Utilize built-in rotation mechanisms with grace periods
-5. **Database security** – Ensure your token storage backend is properly secured
+### Subject authority
 
-### Authentication Header
+- Sessions bind to `realm + optional tenant + opaque String subject ID`; mutable email addresses are not session identifiers.
+- A `SubjectStatusChecker` runs on every session authentication. Disabled, locked, expired, or credential-expired subjects are denied.
+- Applications should load sensitive roles live or include an application security version in their status policy.
 
-The `Authorization` header contains token information. Ensure:
+### Operations
 
-- HTTPS is enforced for all requests containing auth headers
-- Proxy servers don't log authorization headers
-- Client-side code doesn't store tokens in localStorage (use httpOnly cookies)
-- CORS policies are properly configured
+- Cleanup uses bounded pages. Clustered scheduling requires an `OgiriJobLease`; the JPA adapter provides a database lease.
+- Distributed rate limiting is optional. The Redis adapter hashes identifier keys, ignores forwarded-address headers by default, and returns `429` with `Retry-After`.
+- Session events are immutable, emitted only after a store command returns successfully, and exclude credentials. Micrometer tags are bounded-cardinality.
+- Redis deployments must use authentication, least-privilege ACLs, TLS where traffic leaves a trusted host, and a deployment-specific key prefix.
 
-### Sub-Tokens
+## Verification and release controls
 
-If using sub-tokens:
+Pull requests and releases run deterministic state-machine tests, full-chain MockMvc tests, JPA transaction/concurrency tests, Java/Kotlin consumer compilation, dependency analysis, CodeQL, coverage gates, and signed publication checks. A GitHub release is created only after every Maven Central module resolves from the immutable tag.
 
-- Implement proper scope validation
-- Use appropriate TTLs for each sub-token type
-- Monitor sub-token usage patterns
-- Revoke sub-tokens promptly when access should be restricted
-
-### Database Access
-
-The library itself doesn't enforce database security. Ensure:
-
-- Database credentials are externalized (environment variables, secrets management)
-- Network access to database is restricted
-- Regular database backups are performed
-- Database audit logging is enabled
-- Token table has appropriate indexes for efficient cleanup
-
----
-
-## Security Best Practices for Users
-
-### Configuration
-
-```yaml
-# DO: Use environment variables for sensitive data
-spring:
-  datasource:
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD:!required}
-
-# DON'T: Hardcode credentials
-spring:
-  datasource:
-    username: postgres
-    password: mypassword
-```
-
-### Token Rotation
-
-Enable and configure token rotation based on your security requirements:
-
-```yaml
-ogiri:
-  auth:
-    rotate-on-write-only: false # Rotate on every write
-    rotate-stale-seconds: 3600 # Rotate tokens older than 1 hour
-    batch-grace-seconds: 30 # Grace period for old tokens
-```
-
-### CORS Configuration
-
-Properly configure CORS to prevent unauthorized cross-origin token theft:
-
-```kotlin
-@Configuration
-class SecurityConfig {
-  @Bean
-  fun corsConfigurationSource(): CorsConfigurationSource {
-    val config = CorsConfiguration().apply {
-      allowedOrigins = listOf("https://yourdomain.com")  // Specific origins only
-      allowedMethods = listOf("GET", "POST", "PUT", "DELETE")
-      allowedHeaders = listOf("*")
-      exposedHeaders = listOf("Authorization", "access-token", "sub-tokens")
-      allowCredentials = true
-      maxAge = 3600
-    }
-    val source = UrlBasedCorsConfigurationSource()
-    source.registerCorsConfiguration("/**", config)
-    return source
-  }
-}
-```
-
-### Logging
-
-Be careful with logging to avoid exposing tokens:
-
-```kotlin
-// DON'T log tokens
-logger.info("User token: $token")
-
-// DO log token identifiers instead
-logger.info("User $userId authenticated with token type: $tokenType")
-```
-
----
-
-## Dependency Security
-
-We actively monitor dependencies for security vulnerabilities:
-
-- **Dependabot** is configured to check for dependency updates weekly
-- **GitHub Security Scanning** is enabled for vulnerability detection
-- **Regular audits** are performed on the dependency tree
-
-To check for vulnerabilities in your copy:
+Run the local security checks with:
 
 ```bash
-./gradlew dependencyCheckAnalyze
+./gradlew check dependencyCheckAnalyze
 ```
 
----
+## Disclosure
 
-## Vulnerability Disclosure
-
-When a security vulnerability is reported and patched:
-
-1. A patch release is created with a security fix
-2. CVE is requested if applicable
-3. Security advisory is published
-4. Release notes clearly indicate the security fix
-5. All users are encouraged to upgrade
-
-### Past Security Issues
-
-None reported yet.
-
----
-
-## Security Features
-
-### What ogiri Provides
-
-✅ Token-based authentication
-✅ Token rotation with grace periods
-✅ Sub-token isolation
-✅ Configurable expiration
-✅ Hashed token storage (application-configured)
-✅ Filter-based enforcement
-✅ Support for multiple databases
-
-### What ogiri Does NOT Provide
-
-❌ Encryption (you control token hashing)
-❌ Network security (HTTPS is your responsibility)
-❌ Session fixation protection (implement via headers/cookies)
-❌ CSRF protection (implement via middleware)
-❌ Rate limiting (implement at your application level)
-❌ Intrusion detection (implement monitoring separately)
-
-### Recommendations for Complete Security
-
-1. **Use HTTPS everywhere** – All token exchanges must be encrypted
-2. **Implement rate limiting** – Prevent token brute-force attacks
-3. **Monitor token usage** – Alert on unusual patterns
-4. **Regular security audits** – Code and infrastructure reviews
-5. **Incident response plan** – Prepare for token compromise scenarios
-6. **User education** – Teach users not to share tokens
-
----
-
-## Contact
-
-For security questions or concerns, contact the project maintainers.
-
-For general support: See [contributing.md](./docs/contributing.md)
-
----
-
-## Acknowledgments
-
-We thank all security researchers who responsibly report vulnerabilities to help us make ogiri safer for everyone.
+For a confirmed vulnerability, maintainers will prepare supported-line patches, migration guidance, a GitHub security advisory, and a CVE when appropriate before public disclosure. Published advisories will identify affected versions and whether session invalidation or key rotation is required.

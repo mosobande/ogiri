@@ -1,1 +1,2 @@
-com.quantipixels.ogiri.security.config.OgiriSecurityAutoConfiguration
+com.quantipixels.ogiri.security.session.OgiriSessionAutoConfiguration
+com.quantipixels.ogiri.security.session.OgiriSessionObservabilityAutoConfiguration
