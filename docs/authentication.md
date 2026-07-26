@@ -9,6 +9,8 @@
 
 Missing credentials do not authenticate a request; authorization still rejects protected routes. Malformed or invalid credentials produce a stable RFC 9457 response with `401`, `WWW-Authenticate`, and `Cache-Control: no-store`.
 
+In cookie mode, safe requests emit a readable `XSRF-TOKEN` cookie. Browser clients must copy its raw value into the `X-XSRF-TOKEN` header for unsafe requests. The session cookie remains `HttpOnly`.
+
 ## Issuance
 
 The optional sign-in endpoint first delegates username/password or another credential to the application's `AuthenticationManager`. Only an already-authenticated Spring `Authentication` is converted to a session subject. The store transaction returns before the HTTP adapter writes a header or cookie, so rollback and commit failures cannot leak an unusable credential.

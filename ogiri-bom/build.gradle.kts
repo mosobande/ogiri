@@ -21,12 +21,40 @@ dependencies {
 }
 
 publishing {
-  publications { create<MavenPublication>("mavenJava") { from(components["javaPlatform"]) } }
+  publications {
+    create<MavenPublication>("mavenJava") {
+      from(components["javaPlatform"])
+      pom {
+        name.set("ogiri-bom")
+        description.set("Dependency alignment platform for all supported Ogiri modules.")
+        url.set("https://github.com/quantipixels/ogiri")
+        licenses {
+          license {
+            name.set("Apache License 2.0")
+            url.set("https://www.apache.org/licenses/LICENSE-2.0")
+          }
+        }
+        developers {
+          developer {
+            id.set("quantipixels")
+            name.set("Olúwaṣèyí Ṣóbandé")
+            email.set("oluwaseyi@quantipixels.com")
+          }
+        }
+        scm {
+          url.set("https://github.com/quantipixels/ogiri")
+          connection.set("scm:git:https://github.com/quantipixels/ogiri.git")
+          developerConnection.set("scm:git:ssh://git@github.com/quantipixels/ogiri.git")
+        }
+      }
+    }
+  }
   repositories {
     maven {
-      name = "OSSRH"
-      val releasesUrl = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
-      val snapshotsUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+      name = "CentralPortal"
+      val releasesUrl =
+          uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+      val snapshotsUrl = uri("https://central.sonatype.com/repository/maven-snapshots/")
       url = if (version.toString().endsWith("SNAPSHOT")) snapshotsUrl else releasesUrl
       credentials {
         username = (findProperty("ossrhUsername") ?: System.getenv("OSSRH_USERNAME"))?.toString()

@@ -20,6 +20,7 @@ import com.quantipixels.ogiri.session.SubjectId
 import com.quantipixels.ogiri.session.SubjectRef
 import com.quantipixels.ogiri.test.InMemorySessionStore
 import jakarta.servlet.http.Cookie
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.SpringBootApplication
@@ -29,9 +30,10 @@ import org.springframework.context.annotation.Bean
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.provisioning.InMemoryUserDetailsManager
-import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
+import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RestController
 
@@ -63,12 +65,15 @@ class OgiriCookieSecurityTest {
             "__Host-ogiri-session",
             issued.credential.encoded(com.quantipixels.ogiri.session.OpaqueTokenCodec()),
         )
+    val bootstrap = mockMvc.get("/public").andExpect { status { isOk() } }.andReturn().response
+    val csrfCookie = bootstrap.getCookie("XSRF-TOKEN")
+    assertNotNull(csrfCookie)
 
     mockMvc.post("/protected") { cookie(cookie) }.andExpect { status { isForbidden() } }
     mockMvc
         .post("/protected") {
-          cookie(cookie)
-          with(csrf())
+          cookie(cookie, requireNotNull(csrfCookie))
+          header("X-XSRF-TOKEN", csrfCookie.value)
         }
         .andExpect { status { isOk() } }
   }
@@ -87,6 +92,8 @@ class OgiriCookieSecurityTest {
 
   @RestController
   class Controller {
+    @GetMapping("/public") fun publicRoute(): String = "public"
+
     @PostMapping("/protected") fun protectedRoute(): String = "ok"
   }
 }

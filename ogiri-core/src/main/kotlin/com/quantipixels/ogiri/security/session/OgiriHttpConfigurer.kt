@@ -12,7 +12,10 @@
  */
 package com.quantipixels.ogiri.security.session
 
+import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
+import java.util.function.Supplier
 import org.springframework.http.HttpHeaders
 import org.springframework.security.authentication.AnonymousAuthenticationToken
 import org.springframework.security.authentication.AuthenticationManager
@@ -29,6 +32,12 @@ import org.springframework.security.web.authentication.AuthenticationFilter
 import org.springframework.security.web.context.RequestAttributeSecurityContextRepository
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository
 import org.springframework.security.web.csrf.CsrfException
+import org.springframework.security.web.csrf.CsrfFilter
+import org.springframework.security.web.csrf.CsrfToken
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler
+import org.springframework.security.web.csrf.CsrfTokenRequestHandler
+import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler
+import org.springframework.web.filter.OncePerRequestFilter
 
 public class OgiriHttpConfigurer(
     private val provider: OgiriSessionAuthenticationProvider,
@@ -64,7 +73,12 @@ public class OgiriHttpConfigurer(
       }
     }
     if (properties.transport == OgiriTransport.COOKIE) {
-      http.csrf { it.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()) }
+      http
+          .csrf {
+            it.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRequestHandler(OgiriSpaCsrfTokenRequestHandler())
+          }
+          .addFilterAfter(OgiriCsrfCookieFilter(), CsrfFilter::class.java)
     } else {
       // Header credentials are not ambient browser authority; CSRF applies only to cookie mode.
       // lgtm[java/spring-disabled-csrf-protection]
@@ -113,5 +127,36 @@ public class OgiriHttpConfigurer(
     @JvmStatic
     public fun apply(http: HttpSecurity, configurer: OgiriHttpConfigurer): HttpSecurity =
         http.with(configurer) {}
+  }
+}
+
+private class OgiriSpaCsrfTokenRequestHandler : CsrfTokenRequestHandler {
+  private val plain = CsrfTokenRequestAttributeHandler()
+  private val xor = XorCsrfTokenRequestAttributeHandler()
+
+  override fun handle(
+      request: HttpServletRequest,
+      response: HttpServletResponse,
+      csrfToken: Supplier<CsrfToken>,
+  ) {
+    xor.handle(request, response, csrfToken)
+  }
+
+  override fun resolveCsrfTokenValue(request: HttpServletRequest, csrfToken: CsrfToken): String? =
+      if (request.getHeader(csrfToken.headerName).isNullOrBlank()) {
+        xor.resolveCsrfTokenValue(request, csrfToken)
+      } else {
+        plain.resolveCsrfTokenValue(request, csrfToken)
+      }
+}
+
+private class OgiriCsrfCookieFilter : OncePerRequestFilter() {
+  override fun doFilterInternal(
+      request: HttpServletRequest,
+      response: HttpServletResponse,
+      filterChain: FilterChain,
+  ) {
+    (request.getAttribute(CsrfToken::class.java.name) as? CsrfToken)?.token
+    filterChain.doFilter(request, response)
   }
 }

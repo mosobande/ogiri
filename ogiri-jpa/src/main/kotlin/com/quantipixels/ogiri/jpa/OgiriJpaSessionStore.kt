@@ -126,9 +126,7 @@ public open class OgiriJpaSessionStore(
         RotateSessionResult.Conflict
       }
     }
-    entityManager.clear()
-    return RotateSessionResult.Rotated(
-        entityManager.find(OgiriSessionEntity::class.java, command.sessionId.value).toDomain())
+    return RotateSessionResult.Rotated(refreshSession(command.sessionId))
   }
 
   override fun recordUse(sessionId: SessionId, expectedVersion: Long, usedAt: Instant): Boolean =
@@ -175,9 +173,7 @@ public open class OgiriJpaSessionStore(
             .setParameter("expectedVersion", command.expectedVersion)
             .executeUpdate()
     if (updated == 0) return RevokeSessionResult.Conflict
-    entityManager.clear()
-    return RevokeSessionResult.Revoked(
-        entityManager.find(OgiriSessionEntity::class.java, command.sessionId.value).toDomain())
+    return RevokeSessionResult.Revoked(refreshSession(command.sessionId))
   }
 
   override fun revokeAll(
@@ -258,6 +254,14 @@ public open class OgiriJpaSessionStore(
           .setParameter("selector", selector)
           .resultList
           .firstOrNull()
+
+  private fun refreshSession(sessionId: SessionId): StoredSession {
+    val entity =
+        entityManager.find(OgiriSessionEntity::class.java, sessionId.value)
+            ?: throw IllegalStateException("updated session is missing")
+    entityManager.refresh(entity)
+    return entity.toDomain()
+  }
 
   private fun activeEntities(
       subject: SubjectRef,

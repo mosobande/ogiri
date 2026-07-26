@@ -79,8 +79,13 @@ public open class OgiriJpaJobLease(
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   override fun release(name: String, owner: String) {
-    val lease = entityManager.find(OgiriJobLeaseEntity::class.java, name) ?: return
-    entityManager.lock(lease, LockModeType.PESSIMISTIC_WRITE)
+    val lease =
+        entityManager.find(
+            OgiriJobLeaseEntity::class.java,
+            name,
+            LockModeType.PESSIMISTIC_WRITE,
+        )
+            ?: return
     if (lease.ownerId == owner) {
       lease.ownerId = null
       lease.leaseUntil = null
