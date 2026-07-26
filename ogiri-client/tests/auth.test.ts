@@ -200,5 +200,4 @@ describe("OgiriAuth", () => {
             expect(result).toEqual(headers);
         });
     });
-
 });
