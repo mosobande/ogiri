@@ -60,7 +60,7 @@ jobs:
         with:
           files: ./ogiri-client/coverage/lcov.info
           flags: typescript-client
-          fail_ci_if_error: true
+          fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
