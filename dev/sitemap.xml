@@ -2,58 +2,62 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/authentication/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/changelog/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/configuration/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/database/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/development/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/future-roadmap/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/github-pages-setup/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/interface-first-design/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/quickstart/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/react-integration/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/security/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/sub-tokens/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
     </url>
     <url>
          <loc>https://quantipixels.github.io/ogiri/dev/versioning-guide/</loc>
-         <lastmod>2026-03-28</lastmod>
+         <lastmod>2026-07-26</lastmod>
+    </url>
+    <url>
+         <loc>https://quantipixels.github.io/ogiri/dev/adr/0001-selector-verifier-session-core/</loc>
+         <lastmod>2026-07-26</lastmod>
     </url>
 </urlset>
