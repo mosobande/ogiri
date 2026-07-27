@@ -22,8 +22,8 @@ kotlin {
 
 dependencies {
   api(project(":ogiri-session-core"))
-  api("org.springframework:spring-test:6.2.12")
-  api("org.springframework:spring-web:6.2.12")
+  api("org.springframework:spring-test:7.0.8")
+  api("org.springframework:spring-web:7.0.8")
   api("jakarta.servlet:jakarta.servlet-api:6.1.0")
   testImplementation(kotlin("test"))
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
