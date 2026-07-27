@@ -55,7 +55,7 @@ jobs:
         run: pnpm vitest run --coverage
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         if: matrix.node-version == 24
         with:
           files: ./ogiri-client/coverage/lcov.info
