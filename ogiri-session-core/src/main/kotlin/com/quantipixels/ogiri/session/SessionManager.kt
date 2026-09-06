@@ -101,7 +101,11 @@ public constructor(
    * @throws SessionError.SubjectUnavailable when the subject is not allowed to authenticate
    * @throws SessionError.SessionLimitReached when admission is full and eviction is disabled
    */
-  public fun issue(subject: SubjectRef, client: ClientContext): IssuedSession {
+  public fun issue(subject: SubjectRef, client: ClientContext): IssuedSession =
+      issue(subject, client, 0)
+
+  private fun issue(subject: SubjectRef, client: ClientContext, attempt: Int): IssuedSession {
+    check(attempt < 3) { "Session store repeatedly rejected generated selectors" }
     if (!statusChecker.isAllowed(subject)) throw SessionError.SubjectUnavailable()
     val now = clock.instant()
     val generated = codec.generate()
@@ -141,7 +145,7 @@ public constructor(
         )
       }
       CreateSessionResult.LimitReached -> throw SessionError.SessionLimitReached()
-      CreateSessionResult.SelectorConflict -> issue(subject, client)
+      CreateSessionResult.SelectorConflict -> issue(subject, client, attempt + 1)
     }
   }
 
@@ -158,19 +162,10 @@ public constructor(
     val now = clock.instant()
     if (session.revokedAt != null) throw SessionError.Revoked()
     if (!now.isBefore(session.expiresAt)) throw SessionError.Expired()
-    if (!statusChecker.isAllowed(session.subject)) {
-      store.revoke(
-          RevokeSessionCommand(
-              session.id,
-              session.version,
-              now,
-              RevocationReason.ACCOUNT_DISABLED,
-          ))
-      throw SessionError.SubjectUnavailable()
-    }
 
     val current = hasher.matches(decoded.verifier, session.currentDigest)
-    val previous = session.previousDigest?.let { hasher.matches(decoded.verifier, it) } ?: false
+    val previous =
+        !current && (session.previousDigest?.let { hasher.matches(decoded.verifier, it) } ?: false)
     if (!current && previous) {
       if (session.previousValidUntil?.let(now::isBefore) != true) {
         store.revoke(RevokeSessionCommand(session.id, null, now, RevocationReason.TOKEN_REUSE))
@@ -186,6 +181,17 @@ public constructor(
       }
     } else if (!current) {
       throw SessionError.InvalidCredential()
+    }
+
+    if (!statusChecker.isAllowed(session.subject)) {
+      store.revoke(
+          RevokeSessionCommand(
+              session.id,
+              null,
+              now,
+              RevocationReason.ACCOUNT_DISABLED,
+          ))
+      throw SessionError.SubjectUnavailable()
     }
 
     if (!store.recordUse(session.id, session.version, now)) throw SessionError.Conflict()
@@ -205,12 +211,33 @@ public constructor(
     if (!session.isActive(now)) {
       if (session.revokedAt != null) throw SessionError.Revoked() else throw SessionError.Expired()
     }
-    if (!statusChecker.isAllowed(session.subject)) throw SessionError.SubjectUnavailable()
     if (!hasher.matches(decoded.verifier, session.currentDigest)) {
       if (session.previousDigest?.let { hasher.matches(decoded.verifier, it) } == true) {
+        if (session.previousValidUntil?.let(now::isBefore) != true) {
+          store.revoke(RevokeSessionCommand(session.id, null, now, RevocationReason.TOKEN_REUSE))
+          publish(
+              now,
+              SessionEventAction.REUSE_DETECTED,
+              session.subject,
+              session.id,
+              session.familyId,
+              RevocationReason.TOKEN_REUSE)
+          throw SessionError.ReuseDetected()
+        }
         throw SessionError.Conflict()
       }
       throw SessionError.InvalidCredential()
+    }
+
+    if (!statusChecker.isAllowed(session.subject)) {
+      store.revoke(
+          RevokeSessionCommand(
+              session.id,
+              null,
+              now,
+              RevocationReason.ACCOUNT_DISABLED,
+          ))
+      throw SessionError.SubjectUnavailable()
     }
 
     val successor = codec.generate()
@@ -349,6 +376,7 @@ public constructor(
       familyId: String?,
       reason: RevocationReason? = null,
   ) {
+    if (events === NoOpSessionEventPublisher) return
     events.publish(
         SessionEvent(
             identifiers.next(),

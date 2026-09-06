@@ -17,8 +17,6 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
-import org.springframework.http.HttpHeaders
-import org.springframework.test.web.servlet.request.RequestPostProcessor
 
 /** Thread-safe, UTC [Clock] whose instant can be advanced deterministically in tests. */
 public class OgiriFakeClock
@@ -39,24 +37,4 @@ public constructor(private var current: Instant = Instant.parse("2026-01-01T00:0
 
   /** Replaces the current instant. */
   public fun set(instant: Instant): Unit = synchronized(this) { current = instant }
-}
-
-/** Java-friendly MockMvc request processors for Ogiri credential transports. */
-public object OgiriMockMvc {
-  @JvmStatic
-  /** Adds a Bearer authorization header carrying [credential]. */
-  public fun bearer(credential: String): RequestPostProcessor = RequestPostProcessor { request ->
-    request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer $credential")
-    request
-  }
-
-  @JvmStatic
-  /** Adds legacy DTA-compatible access-token, client, and uid headers. */
-  public fun dta(credential: String, client: String, uid: String): RequestPostProcessor =
-      RequestPostProcessor { request ->
-        request.addHeader("access-token", credential)
-        request.addHeader("client", client)
-        request.addHeader("uid", uid)
-        request
-      }
 }

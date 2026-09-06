@@ -6,35 +6,88 @@ on:
   pull_request:
     branches: [ori]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ogiri
+          POSTGRES_USER: ogiri
+          POSTGRES_PASSWORD: ogiri
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ogiri -d ogiri"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
-      - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
-          java-version: 17
-          distribution: "temurin"
+          java-version: "17"
+          distribution: temurin
           cache: gradle
-
-      - name: Build with Gradle
-        run: ./gradlew clean build -x test --no-daemon
-
-      - name: Upload build artifacts
+      - name: Verify all modules and stage Maven publications
+        run: ./gradlew check publishToMavenLocal --no-daemon
+      - name: Test a standalone Java Maven consumer
+        run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
+      - name: Verify generated publication contents
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < .ogiri-version)"
+          for module in ogiri-session-core ogiri-core ogiri-jpa ogiri-redis ogiri-test; do
+            unzip -Z1 "$module/build/libs/$module-$version-javadoc.jar" | grep '\.html$' >/dev/null
+          done
+          unzip -p "ogiri-core/build/libs/ogiri-core-$version.jar" META-INF/spring-configuration-metadata.json |
+            jq -e '.properties | any(.name == "ogiri.session.endpoints.base-path")'
+          if unzip -Z1 "ogiri-jpa/build/libs/ogiri-jpa-$version.jar" | grep '^db/migration/.*\.sql$'; then
+            echo "::error::The library must not claim application Flyway versions"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: build-artifacts
-          path: "**/build/libs/*.jar"
-          retention-days: 1
+          name: unit-and-consumer-results
+          path: |
+            **/build/test-results/test/*.xml
+            sample/sample-java/target/surefire-reports/*.xml
+      - name: Verify PostgreSQL session contracts
+        env:
+          OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri
+          OGIRI_TEST_JDBC_USER: ogiri
+          OGIRI_TEST_JDBC_PASSWORD: ogiri
+        run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
+      - name: Validate the packaged schema with a PostgreSQL Maven consumer
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/ogiri
+          SPRING_DATASOURCE_USERNAME: ogiri
+          SPRING_DATASOURCE_PASSWORD: ogiri
+          SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+        run: |
+          set -euo pipefail
+          version="$(cat .ogiri-version)"
+          unzip -p "ogiri-jpa/build/libs/ogiri-jpa-$version.jar" META-INF/ogiri/schema-postgresql.sql |
+            docker exec -i "$POSTGRES_CONTAINER" psql -U ogiri -d ogiri -v ON_ERROR_STOP=1
+          mvn --batch-mode -f sample/sample-java/pom.xml -Ppostgresql -Dogiri.version="$version" verify
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: verification-artifacts
+          path: |
+            ogiri-jpa/build/test-results/test/*.xml
+            sample/sample-java/target/surefire-reports/*.xml
+            **/build/libs/*.jar
+            **/build/publications/mavenJava/pom-default.xml

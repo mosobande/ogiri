@@ -31,6 +31,19 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
     havingValue = "true",
 )
 public class OgiriProblemHandler {
+  @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException::class)
+  public fun malformedJson(): ResponseEntity<ProblemDetail> =
+      response(HttpStatus.BAD_REQUEST, "malformed_request")
+
+  @ExceptionHandler(org.springframework.security.core.AuthenticationException::class)
+  public fun invalidCredentials(): ResponseEntity<ProblemDetail> =
+      response(HttpStatus.UNAUTHORIZED, "invalid_credentials")
+
+  @ExceptionHandler(
+      org.springframework.security.authentication.AuthenticationServiceException::class)
+  public fun authenticationUnavailable(): ResponseEntity<ProblemDetail> =
+      response(HttpStatus.SERVICE_UNAVAILABLE, "authentication_unavailable")
+
   @ExceptionHandler(SessionError::class)
   public fun sessionError(error: SessionError): ResponseEntity<ProblemDetail> {
     val status =

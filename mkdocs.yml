@@ -1,5 +1,5 @@
 site_name: Ògiri Security
-site_description: Token-based authentication for Spring Boot with pluggable sub-tokens.
+site_description: Opaque session authentication for Java and Spring Boot.
 site_url: https://quantipixels.github.io/ogiri
 repo_url: https://github.com/quantipixels/ogiri
 repo_name: quantipixels/ogiri
@@ -29,7 +29,7 @@ markdown_extensions:
       alternate_style: true
 
 extra:
-  ogiri_version: 2.0.0
+  ogiri_version: 4.0.0
   version:
     provider: mike
     default: latest
@@ -56,9 +56,7 @@ nav:
   - Guides:
       - Configuration: configuration.md
       - Database Integration: database.md
-      - Sub-tokens: sub-tokens.md
       - Authentication Flow: authentication.md
-      - React Integration: react-integration.md
   - Contributing:
       - Development Guide: development.md
       - Security Policy: security.md

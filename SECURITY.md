@@ -4,7 +4,7 @@
 
 | Line            | Security fixes                                               |
 | --------------- | ------------------------------------------------------------ |
-| 4.x             | Supported                                                    |
+| 4.x             | Unreleased development line                                  |
 | 3.x             | Critical fixes only during the published v4 migration window |
 | 2.x and earlier | Unsupported                                                  |
 
@@ -32,7 +32,7 @@ If the report exposes active exploitation or leaked credentials, state that clea
 ### Credential and storage model
 
 - Session credentials are opaque `selector.verifier` values. The selector is an indexed, non-secret routing identifier; the 256-bit verifier is secret.
-- Stores persist only keyed HMAC digests. `IssuedSession.credential` is separate from immutable `StoredSession` and is the only core result containing plaintext.
+- Stores persist only keyed HMAC digests. Issuance and rotation return plaintext through `IssuedSession.credential`, separate from immutable `StoredSession`; stored session snapshots never contain a plaintext verifier.
 - HMAC keys are externally supplied, at least 256 bits, identified by key ID, and may overlap during rotation. Password encoders are not used for bearer credentials.
 - The authoritative `SessionStore` is consulted for authentication and revocation. Cache availability or stale cache data must never restore a revoked session.
 
@@ -47,7 +47,7 @@ If the report exposes active exploitation or leaked credentials, state that clea
 ### Spring Security and transport
 
 - Authentication and authorization must be composed in one selected `SecurityFilterChain`.
-- The optional starter chain permits only explicit `ogiri.session.public-paths` and ends with `anyRequest().authenticated()`.
+- The optional starter chain permits POST sign-in at the configured endpoint prefix and explicit `ogiri.session.public-paths`, then ends with `anyRequest().authenticated()`. Application-owned chains keep their CSRF and additional authentication policy.
 - Bearer is the default v4 transport. Cookie and devise-token-auth compatibility are explicit, mutually exclusive profiles.
 - Cookie mode uses `HttpOnly`, `Secure`, `SameSite`, aligned path/expiry, and CSRF protection by default. `SameSite=None` without `Secure` is rejected.
 - Credential and authentication-error responses use `Cache-Control: no-store`; bearer failures include `WWW-Authenticate` metadata.
@@ -55,7 +55,7 @@ If the report exposes active exploitation or leaked credentials, state that clea
 
 ### Subject authority
 
-- Sessions bind to `realm + optional tenant + opaque String subject ID`; mutable email addresses are not session identifiers.
+- Sessions bind to `realm + optional tenant + opaque String subject ID`; mutable email addresses must not be used as session identifiers. The default user adapter assumes an immutable username; supply explicit subject/status/authority adapters when login names can change.
 - A `SubjectStatusChecker` runs on every session authentication. Disabled, locked, expired, or credential-expired subjects are denied.
 - Applications should load sensitive roles live or include an application security version in their status policy.
 
@@ -68,7 +68,7 @@ If the report exposes active exploitation or leaked credentials, state that clea
 
 ## Verification and release controls
 
-Pull requests and releases run deterministic state-machine tests, full-chain MockMvc tests, JPA transaction/concurrency tests, Java/Kotlin consumer compilation, dependency analysis, CodeQL, coverage gates, and signed publication checks. A GitHub release is created only after every Maven Central module resolves from the immutable tag.
+The build runs state-machine and full-chain HTTP contracts, JPA transaction/concurrency tests, Java/Kotlin consumers, and a standalone Maven consumer of the actual publications. Releases additionally require dependency analysis and signed publication; CodeQL has its own workflow. Test and coverage results are evidence, not a security certification. A GitHub release is created only after every Maven Central module resolves from the immutable tag.
 
 Run the local security checks with:
 
@@ -79,3 +79,9 @@ Run the local security checks with:
 ## Disclosure
 
 For a confirmed vulnerability, maintainers will prepare supported-line patches, migration guidance, a GitHub security advisory, and a CVE when appropriate before public disclosure. Published advisories will identify affected versions and whether session invalidation or key rotation is required.
+
+## Header transport and CSRF
+
+The starter keeps Spring's CSRF filter enabled. In header mode, only requests carrying an explicit Ogiri credential and POST JSON sign-in at the configured endpoint are exempt. Other unsafe requests, including unrelated public routes and browser-simple sign-in submissions, still require a CSRF token. Cookie mode has no such exemptions. Applying Ogiri to an application-owned chain does not change its CSRF policy.
+
+Do not have a reverse proxy translate ambient browser cookies into authorization headers without enforcing CSRF upstream. For that deployment, use a deliberately configured application security chain. Header transport is not evidence that a proxy's upstream authentication was non-ambient.

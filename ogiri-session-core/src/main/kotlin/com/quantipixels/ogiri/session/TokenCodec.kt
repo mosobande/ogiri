@@ -15,30 +15,19 @@ package com.quantipixels.ogiri.session
 import java.security.SecureRandom
 import java.util.Base64
 
-/**
- * Parsed credential parts.
- *
- * [selector] may be used for indexed lookup; [verifier] is secret credential material.
- */
-public data class DecodedCredential(public val selector: String, public val verifier: String)
+/** Parsed credential parts. The verifier must never be logged or persisted. */
+public data class DecodedCredential(public val selector: String, public val verifier: String) {
+  override fun toString(): String = "DecodedCredential(selector=$selector, verifier=[REDACTED])"
+}
 
-/** Generates, encodes, and parses transport-safe session credentials. */
+/** Generates, encodes, and parses session credentials. */
 public interface TokenCodec {
-  /** Generates a cryptographically random selector and verifier. */
   public fun generate(): DecodedCredential
-
-  /** Encodes validated credential parts into their transport representation. */
   public fun encode(selector: String, verifier: String): String
-
-  /** Parses a transport representation or throws when it is malformed. */
   public fun decode(encoded: String): DecodedCredential
 }
 
-/**
- * Dot-delimited, unpadded Base64URL credential codec.
- *
- * The default sizes provide a 128-bit selector and a 256-bit verifier.
- */
+/** Canonical unpadded Base64URL: a public selector and a secret verifier separated by a dot. */
 public class OpaqueTokenCodec
 @JvmOverloads
 public constructor(
@@ -47,52 +36,63 @@ public constructor(
     private val verifierBytes: Int = 32,
 ) : TokenCodec {
   init {
-    require(selectorBytes >= 16) { "selector must contain at least 128 bits" }
-    require(verifierBytes >= 32) { "verifier must contain at least 256 bits" }
+    require(selectorBytes in 16..48) { "selector must contain 16 to 48 bytes" }
+    require(verifierBytes in 32..64) { "verifier must contain 32 to 64 bytes" }
+    require(
+        encodedLength(selectorBytes) + encodedLength(verifierBytes) + 1 <= MAX_CREDENTIAL_CHARS) {
+          "encoded credential exceeds the transport limit"
+        }
   }
-
   override fun generate(): DecodedCredential =
       DecodedCredential(randomPart(selectorBytes), randomPart(verifierBytes))
 
   override fun encode(selector: String, verifier: String): String {
-    validatePart(selector, "selector")
-    validatePart(verifier, "verifier")
+    validatePart(selector, 16, 48)
+    validatePart(verifier, 32, 64)
+    if (selector.length + verifier.length + 1 > MAX_CREDENTIAL_CHARS)
+        throw SessionError.InvalidCredential()
     return "$selector.$verifier"
   }
 
   override fun decode(encoded: String): DecodedCredential {
-    if (encoded.length > MAX_CREDENTIAL_CHARS) throw SessionError.InvalidCredential()
+    if (encoded.length !in MIN_CREDENTIAL_CHARS..MAX_CREDENTIAL_CHARS)
+        throw SessionError.InvalidCredential()
     val separator = encoded.indexOf('.')
-    if (separator <= 0 || separator != encoded.lastIndexOf('.') || separator == encoded.lastIndex) {
-      throw SessionError.InvalidCredential()
-    }
+    if (separator <= 0 || separator != encoded.lastIndexOf('.'))
+        throw SessionError.InvalidCredential()
     val selector = encoded.substring(0, separator)
     val verifier = encoded.substring(separator + 1)
-    validatePart(selector, "selector")
-    validatePart(verifier, "verifier")
+    validatePart(selector, 16, 48)
+    validatePart(verifier, 32, 64)
     return DecodedCredential(selector, verifier)
   }
 
-  private fun randomPart(size: Int): String {
-    val bytes = ByteArray(size)
-    secureRandom.nextBytes(bytes)
-    return ENCODER.encodeToString(bytes)
-  }
+  private fun randomPart(size: Int): String =
+      ENCODER.encodeToString(ByteArray(size).also(secureRandom::nextBytes))
 
-  private fun validatePart(value: String, label: String) {
-    if (value.length !in 22..86 || !value.matches(BASE64_URL)) {
-      throw IllegalArgumentException("$label is not canonical unpadded Base64URL")
+  private fun validatePart(value: String, minimum: Int, maximum: Int) {
+    if (value.length !in encodedLength(minimum)..encodedLength(maximum) ||
+        value.any {
+          it !in 'A'..'Z' && it !in 'a'..'z' && it !in '0'..'9' && it != '-' && it != '_'
+        }) {
+      throw SessionError.InvalidCredential()
     }
-    runCatching { DECODER.decode(value) }.getOrElse { throw SessionError.InvalidCredential() }
+    val decoded =
+        try {
+          DECODER.decode(value)
+        } catch (_: IllegalArgumentException) {
+          throw SessionError.InvalidCredential()
+        }
+    if (decoded.size !in minimum..maximum || ENCODER.encodeToString(decoded) != value) {
+      throw SessionError.InvalidCredential()
+    }
   }
 
   public companion object {
-    /** Smallest encoded credential accepted by this codec. */
     public const val MIN_CREDENTIAL_CHARS: Int = 66
-    /** Largest encoded credential accepted, bounding parsing work for untrusted input. */
     public const val MAX_CREDENTIAL_CHARS: Int = 128
-    private val BASE64_URL = Regex("[A-Za-z0-9_-]+")
     private val ENCODER = Base64.getUrlEncoder().withoutPadding()
     private val DECODER = Base64.getUrlDecoder()
+    private fun encodedLength(bytes: Int): Int = (bytes * 8 + 5) / 6
   }
 }

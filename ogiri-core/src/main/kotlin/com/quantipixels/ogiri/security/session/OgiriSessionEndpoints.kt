@@ -58,9 +58,9 @@ public fun interface OgiriClientContextResolver {
 
 /** JSON request accepted by the optional sign-in endpoint. */
 public data class SignInRequest(
-    @field:NotBlank val username: String,
-    @field:NotBlank val password: String,
-    val clientId: String? = null,
+    @field:NotBlank @field:jakarta.validation.constraints.Size(max = 255) val username: String,
+    @field:NotBlank @field:jakarta.validation.constraints.Size(max = 4096) val password: String,
+    @field:jakarta.validation.constraints.Size(max = 255) val clientId: String? = null,
 )
 
 /** Non-secret session representation returned by session-management endpoints. */
@@ -215,23 +215,42 @@ public class OgiriSessionEndpointController(
 
 /** Extracts a session credential from the transport selected in [OgiriSessionProperties]. */
 public class OgiriRequestCredentialResolver(private val properties: OgiriSessionProperties) {
-  /** Resolves a credential or throws when the configured transport contains none. */
+  private val bearer = OgiriBearerAuthenticationConverter(properties.maximumCredentialBytes)
   public fun resolveRequired(request: HttpServletRequest): String =
-      resolve(request) ?: throw IllegalArgumentException("session credential is required")
-
-  /** Resolves the configured credential transport, returning `null` when absent or malformed. */
+      resolve(request) ?: throw SessionError.InvalidCredential()
   public fun resolve(request: HttpServletRequest): String? {
-    return when (properties.transport) {
-      OgiriTransport.BEARER -> {
-        val value = request.getHeader(HttpHeaders.AUTHORIZATION) ?: return null
-        val parts = value.split(' ', limit = 2)
-        if (parts.size != 2 || !parts[0].equals("Bearer", ignoreCase = true)) return null
-        parts[1]
-      }
-      OgiriTransport.COOKIE ->
-          request.cookies?.singleOrNull { it.name == properties.cookie.name }?.value
-      OgiriTransport.DTA_COMPAT -> request.getHeader("access-token")
-    }
+    val credential =
+        when (properties.transport) {
+          OgiriTransport.BEARER -> bearer.convert(request)?.credentials as? String
+          OgiriTransport.COOKIE -> {
+            var found: String? = null
+            for (cookie in request.cookies.orEmpty()) {
+              if (cookie.name != properties.cookie.name) continue
+              if (found != null)
+                  throw org.springframework.security.authentication.BadCredentialsException(
+                      "multiple_session_cookies")
+              found = cookie.value
+            }
+            found
+          }
+          OgiriTransport.DTA_COMPAT -> {
+            if (request.getHeader(HttpHeaders.AUTHORIZATION) != null)
+                throw org.springframework.security.authentication.BadCredentialsException(
+                    "ambiguous_credential_transport")
+            val values = request.getHeaders("access-token")
+            if (!values.hasMoreElements()) return null
+            val value = values.nextElement()
+            if (values.hasMoreElements())
+                throw org.springframework.security.authentication.BadCredentialsException(
+                    "multiple_access_token_headers")
+            value
+          }
+        }
+            ?: return null
+    if (credential.isBlank() || credential.length > properties.maximumCredentialBytes)
+        throw org.springframework.security.authentication.BadCredentialsException(
+            "malformed_session_credential")
+    return credential
   }
 }
 

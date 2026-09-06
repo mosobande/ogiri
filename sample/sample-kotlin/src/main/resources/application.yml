@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:ogiri-demo;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+ogiri:
+  session:
+    enabled: true
+    token-hash:
+      current-key-id: primary
+      keys:
+        primary: ${OGIRI_TOKEN_HASH_KEY_BASE64}
+    endpoints:
+      enabled: true
+demo:
+  password: ${OGIRI_DEMO_PASSWORD}

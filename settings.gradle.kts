@@ -10,10 +10,6 @@ include(":ogiri-test")
 
 include(":ogiri-jpa")
 
-include(":ogiri-jdbc")
-
-include(":ogiri-caffeine")
-
 include(":ogiri-redis")
 
 include(":sample:sample-java")

@@ -1,56 +1,39 @@
-# Database Integration
+# Database integration
 
-## v4 support matrix
+## Supported stores
 
-| Store                                    | v4 status                             | Continuously exercised                        |
-| ---------------------------------------- | ------------------------------------- | --------------------------------------------- |
-| JPA/Hibernate with H2                    | Supported for tests/local development | Yes                                           |
-| JPA/Hibernate with PostgreSQL            | Supported production target           | Schema and contract gate required for release |
-| Legacy JDBC token repository             | v3 compatibility only                 | Legacy tests only                             |
-| Redis/Caffeine/Spring Cache token lookup | Not in the v4 correctness path        | Legacy tests only                             |
+V4 exercises JPA/Hibernate with H2 for local tests and PostgreSQL for production contracts. The retired v3 JDBC and token-cache adapters are not part of v4. A new adapter must implement the atomic `SessionStore` contract before its database is claimed as supported.
 
-The narrower matrix is intentional. The v3 JDBC adapter's identifier/dialect and concurrency contract is not promoted to v4 until it implements the same atomic `SessionStore` behavior against every claimed database.
+## Provision the schema
 
-## Canonical schema
+`ogiri-jpa` ships `META-INF/ogiri/schema-postgresql.sql`. Copy its SQL into an application-owned Flyway migration or Liquibase change, using your application's next migration version. The library deliberately ships no resource in Flyway's default `db/migration` location: adding a dependency must not collide with an application's version history or mutate its database while Ogiri is disabled.
 
-`ogiri-jpa` ships `db/migration/V4__create_ogiri_sessions.sql`. Applications using Flyway discover the migration from the dependency. The schema contains:
+The schema contains stable session IDs, indexed selectors, realm/tenant/subject identity, current and previous verifier digests, a fixed previous-token deadline, optimistic versions, lifecycle timestamps, revocation reasons, subject admission locks and clustered cleanup leases. Plaintext verifiers never cross the storage boundary.
 
-- stable `session_id` and indexed non-secret `selector`;
-- `realm`, optional `tenant_id`, and opaque `subject_id`;
-- current digest/key ID and one previous digest/key ID with fixed `previous_valid_until`;
-- optimistic `record_version`, token `family_id`, expiry/activity timestamps, and revocation reason;
-- subject-lock rows for atomic maximum-session admission; and
-- job-lease rows for clustered cleanup ownership.
+Use UTC and configure `hibernate.jdbc.time_zone=UTC`. Retain timezone-aware PostgreSQL columns. After applying the SQL, use `spring.jpa.hibernate.ddl-auto=validate`; do not use `update` or `create-drop` in production. CI exercises the actual Maven artifacts against this packaged SQL, not only Hibernate-created tables.
 
-All runtime `Instant` values use UTC. Configure Hibernate with `hibernate.jdbc.time_zone=UTC`. PostgreSQL deployments should retain timezone-aware columns. Validate the migration in CI with `spring.jpa.hibernate.ddl-auto=validate`; do not use `update` in production.
+Older unreleased v4 snapshots placed the same SQL at `db/migration/V4__create_ogiri_sessions.sql`. If that migration has already run, preserve its original contents and version in your application migration history before upgrading. Do not rerun the schema or delete applied history. The SQL itself is unchanged by this relocation.
 
 ## Default JPA store
 
-Adding `ogiri-jpa` registers `OgiriJpaSessionStore` unless the application provides another `SessionStore`. No token entity subclass or token factory is required.
+Adding `ogiri-jpa` registers `OgiriJpaSessionStore` unless you provide another `SessionStore`. No token entity subclass, token factory or application component scan of Ogiri packages is required.
 
-Atomic commands:
+Admission serializes per realm, tenant and subject. Rotation updates only the expected version and digest. Activity updates check expiry and revocation without changing credential state. Revocation targets stable session IDs. Cleanup selects a bounded page of IDs and deletes them in one bulk statement with the expiry predicate rechecked.
 
-- `create` serializes admission per `realm + tenant + subject` and applies the APP-session maximum in the same transaction;
-- `compareAndRotate` updates only the expected record version and digest;
-- `revoke` and `revokeAll` operate on stable session IDs/subjects;
-- `deleteExpiredPage` locks and deletes at most the requested page size; and
-- clustered cleanup initializes its lease row safely under concurrent first acquisition, renews ownership between pages, and uses owner-conditional release.
-
-The store returns immutable `StoredSession` snapshots. Plaintext verifiers are structurally absent from the entity and migration.
+Clustered cleanup initializes its lease row under concurrent first acquisition, renews ownership between pages and releases only leases owned by that worker.
 
 ## Custom stores
 
-A custom adapter implements `SessionStore`. Correctness requirements are part of the interface:
+A custom `SessionStore` must enforce session limits atomically, commit at most one rotation successor per version, keep activity updates separate from credential state, expose revocation immediately to authoritative reads, bound cleanup and return immutable committed snapshots without plaintext secrets.
 
-1. `create` must atomically enforce maximum active sessions.
-2. `compareAndRotate` must commit at most one successor for an expected version/digest.
-3. `recordUse` must never change credential digests or `previousValidUntil`.
-4. Revocation must be immediately observable by subsequent authoritative reads.
-5. Cleanup deletes a bounded page per call.
-6. Returned objects are immutable committed snapshots with no plaintext secret.
+Use `ogiri-test` for in-memory consumer tests. Verify concurrency and transaction behavior against the real datastore before claiming an adapter supports it.
 
-Run the public `ogiri-test` fixtures and the same concurrency/revocation scenarios before claiming support for a new database.
+## Redis and caching
 
-## Cache and Redis
+Authentication reads the authoritative session store. Redis provides optional distributed sign-in throttling, not session validity caching. It stores hashed bucket keys and counters rather than verifiers or application entities.
 
-A v4 authentication request reads the authoritative store. Cache modules cannot restore a revoked session and are not used to hold application entities. The Redis rate limiter stores only hashed bucket keys and counters under an application/realm prefix; it does not store session verifiers or polymorphic session objects.
+## Transaction and rollout boundaries
+
+JPA mutation methods return after their own transaction commits. Subject-lock initialization and the subsequent locked mutation use sequential transactions, so admission and user-wide revocation do not reserve two connections inside Ogiri. An application already holding a database transaction still needs capacity for an independent session transaction.
+
+Do not mix this development version with older v4 snapshot nodes during a rolling deployment: subject-lock key encoding changed to separate identity components unambiguously. Drain old nodes before switching. Historical lock rows are harmless; keep applied schema migrations intact.

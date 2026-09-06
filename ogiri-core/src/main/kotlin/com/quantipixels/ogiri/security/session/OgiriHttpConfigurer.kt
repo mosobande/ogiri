@@ -16,10 +16,8 @@ import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import java.util.function.Supplier
-import org.springframework.http.HttpHeaders
 import org.springframework.security.authentication.AnonymousAuthenticationToken
 import org.springframework.security.authentication.AuthenticationManager
-import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.authentication.InsufficientAuthenticationException
 import org.springframework.security.authentication.ProviderManager
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
@@ -45,12 +43,6 @@ public class OgiriHttpConfigurer(
     private val properties: OgiriSessionProperties,
 ) : AbstractHttpConfigurer<OgiriHttpConfigurer, HttpSecurity>() {
   override fun init(http: HttpSecurity) {
-    http
-        .formLogin { it.disable() }
-        .httpBasic { it.disable() }
-        .logout { it.disable() }
-        .requestCache { it.disable() }
-        .anonymous { it.disable() }
     val forbidden = AccessDeniedHandlerImpl()
     http.exceptionHandling {
       it.authenticationEntryPoint(entryPoint).accessDeniedHandler { request, response, denied ->
@@ -79,10 +71,6 @@ public class OgiriHttpConfigurer(
                 .csrfTokenRequestHandler(OgiriSpaCsrfTokenRequestHandler())
           }
           .addFilterAfter(OgiriCsrfCookieFilter(), CsrfFilter::class.java)
-    } else {
-      // Header credentials are not ambient browser authority; CSRF applies only to cookie mode.
-      // lgtm[java/spring-disabled-csrf-protection]
-      http.csrf { it.disable() }
     }
   }
 
@@ -97,30 +85,11 @@ public class OgiriHttpConfigurer(
         .addFilterBefore(filter, AnonymousAuthenticationFilter::class.java)
   }
 
-  private fun converter(): AuthenticationConverter =
-      when (properties.transport) {
-        OgiriTransport.BEARER ->
-            OgiriBearerAuthenticationConverter(properties.maximumCredentialBytes)
-        OgiriTransport.COOKIE -> AuthenticationConverter(::cookieCredential)
-        OgiriTransport.DTA_COMPAT -> AuthenticationConverter(::dtaCredential)
-      }
-
-  private fun cookieCredential(request: HttpServletRequest): OgiriSessionAuthenticationToken? {
-    val values = request.cookies?.filter { it.name == properties.cookie.name }.orEmpty()
-    if (values.isEmpty()) return null
-    if (values.size != 1 || values.single().value.isBlank()) {
-      throw BadCredentialsException("malformed_cookie_credential")
+  private fun converter(): AuthenticationConverter {
+    val resolver = OgiriRequestCredentialResolver(properties)
+    return AuthenticationConverter { request ->
+      resolver.resolve(request)?.let(OgiriSessionAuthenticationToken::unauthenticated)
     }
-    return OgiriSessionAuthenticationToken.unauthenticated(values.single().value)
-  }
-
-  private fun dtaCredential(request: HttpServletRequest): OgiriSessionAuthenticationToken? {
-    if (request.getHeader(HttpHeaders.AUTHORIZATION) != null) {
-      throw BadCredentialsException("ambiguous_credential_transport")
-    }
-    val token = request.getHeader("access-token") ?: return null
-    if (token.isBlank()) throw BadCredentialsException("malformed_dta_credential")
-    return OgiriSessionAuthenticationToken.unauthenticated(token)
   }
 
   public companion object {
