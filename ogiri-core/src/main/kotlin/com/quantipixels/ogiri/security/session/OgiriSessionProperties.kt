@@ -57,7 +57,7 @@ public data class OgiriSessionProperties(
     val previousVersionGrace: Duration = Duration.ofSeconds(5),
     @field:Min(1) val maximumActiveSessions: Int = 10,
     val evictOldestWhenFull: Boolean = true,
-    val publicPaths: List<String> = listOf("/auth/sign-in", "/actuator/health"),
+    val publicPaths: List<String> = listOf("/actuator/health"),
     @field:Valid val tokenHash: TokenHash = TokenHash(),
     @field:Valid val cookie: Cookie = Cookie(),
     @field:Valid val endpoints: Endpoints = Endpoints(),

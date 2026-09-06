@@ -12,27 +12,34 @@
  */
 package com.quantipixels.ogiri.samples.kotlin
 
+import java.security.Principal
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
-import org.springframework.context.annotation.ComponentScan
+import org.springframework.context.annotation.Bean
+import org.springframework.security.core.userdetails.User
+import org.springframework.security.core.userdetails.UserDetailsService
+import org.springframework.security.crypto.factory.PasswordEncoderFactories
+import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.provisioning.InMemoryUserDetailsManager
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
 
-/**
- * Spring Boot application demonstrating ogiri token-based authentication in Kotlin.
- *
- * This sample shows how to:
- * - Integrate ogiri as a dependency in a Kotlin Spring Boot application
- * - Configure required SPI implementations (OgiriUserDirectory, OgiriRouteRegistry)
- * - Use the authentication filter and token service
- */
 @SpringBootApplication
-@ComponentScan(
-    basePackages =
-        [
-            "com.quantipixels.ogiri.security",
-            "com.quantipixels.ogiri.samples.kotlin",
-        ],
-)
-class Application
+@RestController
+class Application {
+  @Bean
+  fun passwordEncoder(): PasswordEncoder =
+      PasswordEncoderFactories.createDelegatingPasswordEncoder()
+  @Bean
+  fun users(
+      encoder: PasswordEncoder,
+      @Value("\${demo.password}") password: String
+  ): UserDetailsService =
+      InMemoryUserDetailsManager(
+          User.withUsername("demo").password(encoder.encode(password)).roles("USER").build())
+  @GetMapping("/hello") fun hello(principal: Principal): String = principal.name
+}
 
 fun main(args: Array<String>) {
   runApplication<Application>(*args)
