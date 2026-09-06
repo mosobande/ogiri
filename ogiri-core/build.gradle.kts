@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   kotlin("jvm")
+  kotlin("kapt")
   `java-library`
   `maven-publish`
   signing
@@ -36,6 +37,7 @@ dependencyManagement {
 }
 
 dependencies {
+  kapt("org.springframework.boot:spring-boot-configuration-processor")
   api(project(":ogiri-session-core"))
   api("org.springframework.boot:spring-boot-starter-security")
   api("org.springframework.boot:spring-boot-starter-web")

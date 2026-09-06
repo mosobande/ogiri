@@ -39,6 +39,11 @@ public class OgiriProblemHandler {
   public fun invalidCredentials(): ResponseEntity<ProblemDetail> =
       response(HttpStatus.UNAUTHORIZED, "invalid_credentials")
 
+  @ExceptionHandler(
+      org.springframework.security.authentication.AuthenticationServiceException::class)
+  public fun authenticationUnavailable(): ResponseEntity<ProblemDetail> =
+      response(HttpStatus.SERVICE_UNAVAILABLE, "authentication_unavailable")
+
   @ExceptionHandler(SessionError::class)
   public fun sessionError(error: SessionError): ResponseEntity<ProblemDetail> {
     val status =

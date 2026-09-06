@@ -9,6 +9,8 @@ build/
 application*.yml
 application*.properties
 !application.properties
+!sample/sample-java/src/main/resources/application.yml
+!sample/sample-kotlin/src/main/resources/application.yml
 
 ### STS ###
 .apt_generated
