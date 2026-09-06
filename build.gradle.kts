@@ -7,6 +7,7 @@ apply(from = "gradle/version.gradle.kts")
 plugins {
   id("org.jetbrains.dokka") version "2.2.0" apply false
   kotlin("jvm") version libs.versions.kotlin.get() apply false
+  kotlin("kapt") version libs.versions.kotlin.get() apply false
   kotlin("plugin.spring") version libs.versions.kotlin.get() apply false
   kotlin("plugin.jpa") version libs.versions.kotlin.get() apply false
   id("com.diffplug.spotless") version libs.versions.spotless.get() apply false
@@ -61,9 +62,7 @@ allprojects {
           ".ai-toolkit/**",
           "plans/**",
           "thoughts/**",
-          "**/pnpm-lock.yaml",
-          "pnpm-workspace.yaml",
-          "sample/sample-react/**")
+          "**/target/**")
       prettier()
       trimTrailingWhitespace()
       endWithNewline()
