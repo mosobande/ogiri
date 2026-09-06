@@ -14,7 +14,7 @@ Version 4 is a breaking, unreleased migration from the v3 Devise-style token API
 </dependency>
 ```
 
-Add your database driver and apply the supplied schema through your application's migrations. Ogiri does not create production tables or own your user database.
+Add your database driver and apply `META-INF/ogiri/schema-postgresql.sql` through your application's migrations. The schema is an explicit template, not an automatically discovered Flyway migration. Adding the library does not claim migration versions or create production tables.
 
 ## Integrate
 
