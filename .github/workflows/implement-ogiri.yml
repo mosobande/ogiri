@@ -18,31 +18,49 @@ jobs:
           java-version: '17'
           distribution: temurin
           cache: gradle
-      - name: Apply reviewed changes to the expected branch head
+      - name: Apply reviewed v4 cleanup
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 64008fa2b8387e6ba14f4d7c7f058cc56a3dc49f
-          gh api repos/quantipixels/ogiri/git/blobs/1ada8c4f62e0f5684448ba10e5acc4ea47ecee11 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
+          test "$(git rev-parse HEAD)" = 73eef6171c081703cd98bac63968107a428a051d
+          gh api repos/quantipixels/ogiri/git/blobs/1ef0457416d76ecb53a95baac2428da20ac5f95a --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
           python "$RUNNER_TEMP/change.py"
-          git rm .github/workflows/audit-checkout.yml
       - name: Format source
         run: ./gradlew spotlessApply --no-daemon
-      - name: Commit the coherent security and integration change
+      - name: Commit the coherent library migration
         run: |
           set -euo pipefail
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'fix: harden v4 session credentials and Java Spring integration'
+          git commit -m 'refactor!: retire v3 adapters and ship native Maven consumers'
           git push origin HEAD:refs/heads/build/java-first-auth
           git rev-parse HEAD
-      - name: Verify source and all current consumers
+      - name: Verify and publish locally
         run: |
           set -o pipefail
-          ./gradlew check --continue --no-daemon 2>&1 | tee "$RUNNER_TEMP/verification.log"
+          ./gradlew check publishToMavenLocal --continue --no-daemon 2>&1 | tee "$RUNNER_TEMP/verification.log"
+      - name: Test standalone Maven consumer
+        run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
+      - name: Summarize contract test results
+        if: always()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as E
+          total = failed = skipped = 0
+          for p in Path('.').glob('**/test-results/test/TEST-*.xml'):
+              root = E.parse(p).getroot()
+              total += int(root.get('tests', 0)); failed += int(root.get('failures', 0)) + int(root.get('errors', 0)); skipped += int(root.get('skipped', 0))
+              for case in root.findall('testcase'):
+                  for error in list(case.findall('failure')) + list(case.findall('error')):
+                      print(p, case.get('name'), error.get('message'), (error.text or '')[:3000])
+              if root.findall('.//failure'):
+                  print((root.findtext('system-out') or '')[-14000:])
+          print(f'TEST SUMMARY: total={total} failed={failed} skipped={skipped}')
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
@@ -50,4 +68,7 @@ jobs:
           path: |
             ${{ runner.temp }}/verification.log
             **/build/test-results/test/*.xml
+            **/build/libs/*.jar
+            **/build/publications/mavenJava/pom-default.xml
+            sample/sample-java/target/surefire-reports/*.xml
           retention-days: 3
