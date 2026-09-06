@@ -52,6 +52,10 @@ jobs:
           done
           unzip -p "ogiri-core/build/libs/ogiri-core-$version.jar" META-INF/spring-configuration-metadata.json |
             jq -e '.properties | any(.name == "ogiri.session.endpoints.base-path")'
+          if unzip -Z1 "ogiri-jpa/build/libs/ogiri-jpa-$version.jar" | grep '^db/migration/.*\.sql$'; then
+            echo "::error::The library must not claim application Flyway versions"
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
@@ -65,11 +69,25 @@ jobs:
           OGIRI_TEST_JDBC_USER: ogiri
           OGIRI_TEST_JDBC_PASSWORD: ogiri
         run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
+      - name: Validate the packaged schema with a PostgreSQL Maven consumer
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/ogiri
+          SPRING_DATASOURCE_USERNAME: ogiri
+          SPRING_DATASOURCE_PASSWORD: ogiri
+          SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+        run: |
+          set -euo pipefail
+          version="$(cat .ogiri-version)"
+          unzip -p "ogiri-jpa/build/libs/ogiri-jpa-$version.jar" META-INF/ogiri/schema-postgresql.sql |
+            docker exec -i "$POSTGRES_CONTAINER" psql -U ogiri -d ogiri -v ON_ERROR_STOP=1
+          mvn --batch-mode -f sample/sample-java/pom.xml -Ppostgresql -Dogiri.version="$version" verify
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: verification-artifacts
           path: |
             ogiri-jpa/build/test-results/test/*.xml
+            sample/sample-java/target/surefire-reports/*.xml
             **/build/libs/*.jar
             **/build/publications/mavenJava/pom-default.xml

@@ -16,6 +16,19 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ogiri
+          POSTGRES_USER: ogiri
+          POSTGRES_PASSWORD: ogiri
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ogiri -d ogiri"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout immutable tag
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -33,6 +46,25 @@ jobs:
           export RELEASE_VERSION="${GITHUB_REF_NAME#v}"
           ./gradlew clean check dependencyCheckAnalyze publishToMavenLocal --no-daemon
           mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$RELEASE_VERSION" verify
+      - name: Verify PostgreSQL session contracts
+        env:
+          OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri
+          OGIRI_TEST_JDBC_USER: ogiri
+          OGIRI_TEST_JDBC_PASSWORD: ogiri
+        run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
+      - name: Validate the packaged schema with a PostgreSQL Maven consumer
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/ogiri
+          SPRING_DATASOURCE_USERNAME: ogiri
+          SPRING_DATASOURCE_PASSWORD: ogiri
+          SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          unzip -p "ogiri-jpa/build/libs/ogiri-jpa-$version.jar" META-INF/ogiri/schema-postgresql.sql |
+            docker exec -i "$POSTGRES_CONTAINER" psql -U ogiri -d ogiri -v ON_ERROR_STOP=1
+          mvn --batch-mode -f sample/sample-java/pom.xml -Ppostgresql -Dogiri.version="$version" verify
 
   publish:
     needs: verify
