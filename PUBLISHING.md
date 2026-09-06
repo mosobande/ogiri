@@ -17,4 +17,4 @@ The tag workflow owns release verification, signing, Central Portal transfer and
 
 Use an immutable `vX.Y.Z` tag only after review and successful consumer tests. The workflow verifies artifacts resolve before creating the GitHub release. Local publication does not publish to Maven Central. This development change does not create a release or tag.
 
-Snapshots are verified before upload. Treat source/Javadoc artifacts as publication requirements; API documentation completeness is a separate review concern for Kotlin sources.
+Snapshots are verified before upload. Treat source/Javadoc artifacts as publication requirements; Dokka generates Kotlin/Java API pages in each Javadoc artifact; publication must not ship a manifest-only documentation jar.

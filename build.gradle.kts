@@ -5,6 +5,7 @@ apply(from = "gradle/version.gradle.kts")
 
 // Consolidate Kotlin plugin in root to avoid loading multiple times in subprojects
 plugins {
+  id("org.jetbrains.dokka") version "2.2.0" apply false
   kotlin("jvm") version libs.versions.kotlin.get() apply false
   kotlin("plugin.spring") version libs.versions.kotlin.get() apply false
   kotlin("plugin.jpa") version libs.versions.kotlin.get() apply false

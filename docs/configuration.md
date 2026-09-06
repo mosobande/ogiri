@@ -14,7 +14,6 @@ ogiri:
     evict-oldest-when-full: true
     maximum-credential-bytes: 256
     public-paths:
-      - /auth/sign-in
       - /actuator/health
     token-hash:
       current-key-id: primary
@@ -74,9 +73,9 @@ Cookie mode accepts only the configured cookie and emits no readable token heade
 
 ## Security chain
 
-When the application owns a `SecurityFilterChain`, apply `OgiriHttpConfigurer` to that same chain and define authorization there. When no chain exists, the optional starter permits `public-paths` and protects every other request.
+When the application owns a `SecurityFilterChain`, apply `OgiriHttpConfigurer` to that same chain and define authorization there. When no chain exists, the optional starter permits POST sign-in and `public-paths`, then protects every other request. An application-owned chain retains its CSRF and other authentication configuration. Other authorization schemes are not interpreted as Ogiri credentials.
 
-The optional endpoint starter uses `endpoints.base-path` as its route prefix. The value must be a canonical absolute literal path such as `/auth` or `/api/session-auth`; root, trailing slashes, duplicate separators, wildcards, variables, queries, and fragments are rejected. When changing it, update `public-paths`, gateway routes, clients, and application-owned authorization matchers to the same prefix.
+The optional endpoint starter uses `endpoints.base-path` as its route prefix. The value must be a canonical absolute literal path such as `/auth` or `/api/session-auth`; root, trailing slashes, duplicate separators, wildcards, variables, queries, and fragments are rejected. The default chain automatically permits POST sign-in at this prefix. Update gateway routes, clients and application-owned authorization matchers when changing it; no duplicate `public-paths` entry is required.
 
 ## Cleanup
 
@@ -84,4 +83,4 @@ Cleanup is disabled by default. Enabling it requires both `SessionManager` and a
 
 ## Distributed rate limiting
 
-Enabling rate limiting requires an `OgiriRateLimiter`. With `ogiri-redis`, Ogiri hashes IP/normalized-identifier keys and uses one atomic Redis script per bucket. Forwarded headers are not trusted by default. Rejections use RFC 9457 problem details, status `429`, and `Retry-After`.
+Enabling rate limiting requires an `OgiriRateLimiter` and a window of at least one millisecond. With `ogiri-redis`, Ogiri hashes IP/normalized-identifier keys and uses one atomic Redis script per bucket. Forwarded headers are not trusted by default. Rejections use RFC 9457 problem details, status `429`, and `Retry-After`.

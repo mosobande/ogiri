@@ -2,6 +2,11 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.plugins.signing.SigningExtension
 
+if (project.name != "ogiri-bom") {
+  apply(plugin = "org.jetbrains.dokka")
+  tasks.named<Jar>("javadocJar") { from(tasks.named("dokkaGeneratePublicationHtml")) }
+}
+
 configure<PublishingExtension> {
   publications {
     create<MavenPublication>("mavenJava") {

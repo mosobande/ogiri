@@ -54,3 +54,9 @@ Run the public `ogiri-test` fixtures and the same concurrency/revocation scenari
 ## Cache and Redis
 
 A v4 authentication request reads the authoritative store. Cache modules cannot restore a revoked session and are not used to hold application entities. The Redis rate limiter stores only hashed bucket keys and counters under an application/realm prefix; it does not store session verifiers or polymorphic session objects.
+
+## Transaction and rollout boundaries
+
+JPA mutation methods return after their own transaction commits. Subject-lock initialization and the subsequent locked mutation use sequential transactions, so admission and user-wide revocation do not reserve two connections inside Ogiri. A calling application that already holds a database transaction still needs capacity for an independent session transaction.
+
+Do not mix this development version with older v4 snapshots during a rolling deployment: the subject-lock key encoding changed to unambiguously separate identity components. Drain old nodes before switching. Historical lock rows are harmless; keep applied schema migrations intact.
