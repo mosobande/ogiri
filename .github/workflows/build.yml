@@ -17,6 +17,19 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ogiri
+          POSTGRES_USER: ogiri
+          POSTGRES_PASSWORD: ogiri
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ogiri -d ogiri"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -30,12 +43,33 @@ jobs:
         run: ./gradlew check publishToMavenLocal --no-daemon
       - name: Test a standalone Java Maven consumer
         run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
+      - name: Verify generated publication contents
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < .ogiri-version)"
+          for module in ogiri-session-core ogiri-core ogiri-jpa ogiri-redis ogiri-test; do
+            unzip -Z1 "$module/build/libs/$module-$version-javadoc.jar" | grep '\.html$' >/dev/null
+          done
+          unzip -p "ogiri-core/build/libs/ogiri-core-$version.jar" META-INF/spring-configuration-metadata.json |
+            jq -e '.properties | any(.name == "ogiri.session.endpoints.base-path")'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: verification
+          name: unit-and-consumer-results
           path: |
             **/build/test-results/test/*.xml
+            sample/sample-java/target/surefire-reports/*.xml
+      - name: Verify PostgreSQL session contracts
+        env:
+          OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri
+          OGIRI_TEST_JDBC_USER: ogiri
+          OGIRI_TEST_JDBC_PASSWORD: ogiri
+        run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: verification-artifacts
+          path: |
+            ogiri-jpa/build/test-results/test/*.xml
             **/build/libs/*.jar
             **/build/publications/mavenJava/pom-default.xml
-            sample/sample-java/target/surefire-reports/*.xml
