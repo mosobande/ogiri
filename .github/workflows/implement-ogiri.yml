@@ -31,78 +31,77 @@ jobs:
           java-version: "17"
           distribution: temurin
           cache: gradle
-      - name: Apply reviewed packaging corrections
+      - name: Apply the reviewed metadata correction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = aa1902238b004b1c13d3c1c4057f6ccb9356b993
-          gh api repos/quantipixels/ogiri/git/blobs/106c4925514420b57a16c99629e70c84284c8383 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
+          test "$(git rev-parse HEAD)" = a6add2ab7fe650a12541a381c6d2861a62773304
+          gh api repos/quantipixels/ogiri/git/blobs/50d797248c4a239b258c8b210703a69e5d3260d5 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
           python "$RUNNER_TEMP/change.py"
-      - name: Format source
-        run: ./gradlew spotlessApply --no-daemon
-      - name: Commit and verify tracked resources
-        id: commit
-        run: |
-          set -euo pipefail
+          ./gradlew spotlessApply --no-daemon
           git restore --source=HEAD --staged --worktree .github/workflows
-          git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .gitignore sample ogiri-core
-          git commit --quiet -m 'fix: track runnable sample configuration and preserve authentication failures'
-          git add -A
-          git commit --quiet -m 'build: generate configuration metadata and retire stale client guidance'
-          git ls-files --error-unmatch sample/sample-java/src/main/resources/application.yml sample/sample-kotlin/src/main/resources/application.yml
-          git push origin HEAD:refs/heads/build/java-first-auth
-          git log -2 --format='%H %s'
-      - name: Verify H2 Redis HTTP Java and Maven publications
+      - name: Verify all contracts and Maven publications
         run: |
           set -o pipefail
           ./gradlew check publishToMavenLocal --continue --no-daemon 2>&1 | tee "$RUNNER_TEMP/verification.log"
-      - name: Preserve first-pass results
+      - name: Preserve H2 Redis HTTP and Java results
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/contract-results"
           find . -path '*/build/test-results/test/TEST-*.xml' -exec cp --parents {} "$RUNNER_TEMP/contract-results" \;
-      - name: Verify PostgreSQL concurrency and transaction boundaries
-        if: ${{ !cancelled() && steps.commit.outcome == 'success' }}
+      - name: Verify generated publication contents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import json
+          version=Path('.ogiri-version').read_text().strip()
+          for module in ['ogiri-session-core','ogiri-core','ogiri-jpa','ogiri-redis','ogiri-test']:
+              p=Path(module)/'build/libs'/f'{module}-{version}-javadoc.jar'
+              with ZipFile(p) as archive:
+                  pages=[n for n in archive.namelist() if n.endswith('.html')]
+                  print('API PAGES',module,len(pages)); assert pages
+          with ZipFile(f'ogiri-core/build/libs/ogiri-core-{version}.jar') as archive:
+              metadata=json.loads(archive.read('META-INF/spring-configuration-metadata.json'))
+              names={p['name'] for p in metadata['properties']}
+              print('CONFIGURATION METADATA',sorted(names))
+              required={'ogiri.session.enabled','ogiri.session.transport','ogiri.session.endpoints.base-path','ogiri.session.cookie.secure','ogiri.session.token-hash.current-key-id','ogiri.session.rate-limit.window','ogiri.session.cleanup.batch-size'}
+              assert required <= names, required-names
+              assert not any(n.startswith('ogiri.auth.') for n in names)
+          PY
+      - name: Verify PostgreSQL session contracts
         env:
           OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri
           OGIRI_TEST_JDBC_USER: ogiri
           OGIRI_TEST_JDBC_PASSWORD: ogiri
         run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
       - name: Test standalone Maven consumer
-        if: ${{ !cancelled() && steps.commit.outcome == 'success' }}
         run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
-      - name: Inspect actual publication contents and contract results
+      - name: Commit and push the verified correction
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionProperties.kt
+          git commit --quiet -m 'fix: generate complete metadata for immutable session configuration'
+          test -z "$(git status --porcelain)"
+          git push origin HEAD:refs/heads/build/java-first-auth
+          git log -1 --format='%H %s'
+      - name: Summarize verified contracts
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
-          from zipfile import ZipFile
-          import json, os
-          import xml.etree.ElementTree as E
-          for label, directory, pattern in [('H2/Redis/HTTP/Java', Path(os.environ['RUNNER_TEMP'])/'contract-results', '**/TEST-*.xml'), ('PostgreSQL', Path('ogiri-jpa/build/test-results/test'), 'TEST-*.xml'), ('Maven', Path('sample/sample-java/target/surefire-reports'), 'TEST-*.xml')]:
-              total = failed = skipped = 0
+          import os, xml.etree.ElementTree as E
+          for label,directory,pattern in [('H2/Redis/HTTP/Java',Path(os.environ['RUNNER_TEMP'])/'contract-results','**/TEST-*.xml'),('PostgreSQL',Path('ogiri-jpa/build/test-results/test'),'TEST-*.xml'),('Maven',Path('sample/sample-java/target/surefire-reports'),'TEST-*.xml')]:
+              total=failed=skipped=0
               for p in directory.glob(pattern):
                   root=E.parse(p).getroot()
                   total+=int(root.get('tests',0)); failed+=int(root.get('failures',0))+int(root.get('errors',0)); skipped+=int(root.get('skipped',0))
-                  for case in root.findall('testcase'):
-                      for error in list(case.findall('failure'))+list(case.findall('error')):
-                          print(p,case.get('name'),error.get('message'),(error.text or '')[:3000])
-                  if root.findall('.//failure'): print((root.findtext('system-out') or '')[-10000:])
+                  for error in root.findall('.//failure')+root.findall('.//error'): print(p,error.get('message'),(error.text or '')[:1500])
               print(f'{label}: total={total} failed={failed} skipped={skipped}')
-          for p in Path('.').glob('ogiri-*/build/libs/*-javadoc.jar'):
-              with ZipFile(p) as archive:
-                  pages=[n for n in archive.namelist() if n.endswith('.html')]
-                  print('API PAGES',p,len(pages)); assert pages
-          with ZipFile('ogiri-core/build/libs/ogiri-core-4.0.0.jar') as archive:
-              metadata=json.loads(archive.read('META-INF/spring-configuration-metadata.json'))
-              names={p['name'] for p in metadata['properties']}
-              print('CONFIGURATION METADATA',sorted(names))
-              assert 'ogiri.session.enabled' in names and 'ogiri.session.endpoints.base-path' in names
-              assert not any(n.startswith('ogiri.auth.') for n in names)
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
