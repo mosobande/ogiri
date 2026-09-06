@@ -21,6 +21,7 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import java.time.Duration
 import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.boot.context.properties.bind.ConstructorBinding
 import org.springframework.validation.annotation.Validated
 
 /** HTTP transport used to receive and return session credentials. */
@@ -43,10 +44,15 @@ public enum class OgiriSameSite {
  * Security-sensitive defaults keep the subsystem and optional endpoints disabled, use strict
  * cookies, and require token-hash key material before a default
  * [com.quantipixels.ogiri.session.TokenHasher] can be created.
+ *
+ * Explicit binding constructors let the Java annotation processor discover immutable properties.
+ * Unannotated no-arg constructors retain Java defaults without annotating synthetic overloads.
  */
 @Validated
 @ConfigurationProperties("ogiri.session")
-public data class OgiriSessionProperties(
+public data class OgiriSessionProperties
+@ConstructorBinding
+constructor(
     val enabled: Boolean = false,
     val realm: String = "users",
     val transport: OgiriTransport = OgiriTransport.BEARER,
@@ -64,6 +70,8 @@ public data class OgiriSessionProperties(
     @field:Valid val cleanup: Cleanup = Cleanup(),
     @field:Valid val rateLimit: RateLimit = RateLimit(),
 ) {
+  public constructor() : this(enabled = false)
+
   init {
     require(realm.matches(Regex("[a-z0-9][a-z0-9._-]{0,62}"))) {
       "ogiri.session.realm has invalid syntax"
@@ -78,7 +86,9 @@ public data class OgiriSessionProperties(
   }
 
   /** Cookie attributes used when [transport] is [OgiriTransport.COOKIE]. */
-  public data class Cookie(
+  public data class Cookie
+  @ConstructorBinding
+  constructor(
       @field:NotBlank
       @field:Pattern(regexp = "(?:__Host-)?[!#$%&'*+.^_`|~0-9A-Za-z-]+")
       val name: String = "__Host-ogiri-session",
@@ -88,6 +98,8 @@ public data class OgiriSessionProperties(
       val path: String = "/",
       val maxAgeSeconds: Long = 1_209_600,
   ) {
+    public constructor() : this(name = "__Host-ogiri-session")
+
     @get:AssertTrue(message = "SameSite=None requires Secure=true")
     val secureSameSiteNone: Boolean
       get() = sameSite != OgiriSameSite.NONE || secure
@@ -98,19 +110,27 @@ public data class OgiriSessionProperties(
   }
 
   /** HMAC key ring used to hash credential verifiers; values are Base64-encoded key bytes. */
-  public data class TokenHash(
+  public data class TokenHash
+  @ConstructorBinding
+  constructor(
       val currentKeyId: String = "",
       val keys: Map<String, String> = emptyMap(),
-  )
+  ) {
+    public constructor() : this(currentKeyId = "")
+  }
 
   /** Scheduling, lease, and page-size settings for expired-session cleanup. */
-  public data class Cleanup(
+  public data class Cleanup
+  @ConstructorBinding
+  constructor(
       val enabled: Boolean = false,
       val interval: Duration = Duration.ofHours(6),
       val lease: Duration = Duration.ofMinutes(30),
       val maxRunDuration: Duration = Duration.ofMinutes(5),
       @field:Min(1) @field:Max(10_000) val batchSize: Int = 500,
   ) {
+    public constructor() : this(enabled = false)
+
     init {
       require(!interval.isNegative && !interval.isZero) {
         "ogiri.session.cleanup.interval must be positive"
@@ -126,12 +146,16 @@ public data class OgiriSessionProperties(
   }
 
   /** Fixed-window rate-limit settings for the optional sign-in endpoint. */
-  public data class RateLimit(
+  public data class RateLimit
+  @ConstructorBinding
+  constructor(
       val enabled: Boolean = false,
       @field:Min(1) val signInPermits: Long = 10,
       val window: Duration = Duration.ofMinutes(1),
       @field:NotBlank val keyPrefix: String = "ogiri:rate-limit:",
   ) {
+    public constructor() : this(enabled = false)
+
     init {
       require(!window.isNegative && window.toMillis() > 0) {
         "ogiri.session.rate-limit.window must be at least one millisecond"
@@ -140,10 +164,14 @@ public data class OgiriSessionProperties(
   }
 
   /** Settings for the optional built-in session-management HTTP endpoints. */
-  public data class Endpoints(
+  public data class Endpoints
+  @ConstructorBinding
+  constructor(
       val enabled: Boolean = false,
       @field:NotBlank val basePath: String = "/auth",
   ) {
+    public constructor() : this(enabled = false)
+
     init {
       require(basePath.matches(Regex("/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)"))) {
         "ogiri.session.endpoints.base-path must be a canonical absolute literal path"
