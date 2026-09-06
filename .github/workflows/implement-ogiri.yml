@@ -17,7 +17,7 @@ jobs:
           POSTGRES_PASSWORD: ogiri
         ports: [5432:5432]
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U ogiri -d ogiri"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -31,32 +31,32 @@ jobs:
           java-version: "17"
           distribution: temurin
           cache: gradle
-      - name: Apply reviewed composition and publication corrections
+      - name: Apply reviewed packaging corrections
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 7bf4120342c2b66ab46d2abaacb05417264bef44
-          gh api repos/quantipixels/ogiri/git/blobs/5932dc5bb2553a4cbd22349d376ae2e72714cf95 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
+          test "$(git rev-parse HEAD)" = aa1902238b004b1c13d3c1c4057f6ccb9356b993
+          gh api repos/quantipixels/ogiri/git/blobs/106c4925514420b57a16c99629e70c84284c8383 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
           python "$RUNNER_TEMP/change.py"
       - name: Format source
         run: ./gradlew spotlessApply --no-daemon
-      - name: Commit the implementation and publication changes separately
+      - name: Commit and verify tracked resources
+        id: commit
         run: |
           set -euo pipefail
-          git diff -- .github/workflows
           git restore --source=HEAD --staged --worktree .github/workflows
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add ogiri-core ogiri-session-core ogiri-jpa ogiri-redis
-          git commit --quiet -m 'fix: preserve host security and avoid nested session-store connections'
+          git add .gitignore sample ogiri-core
+          git commit --quiet -m 'fix: track runnable sample configuration and preserve authentication failures'
           git add -A
-          git commit --quiet -m 'build: publish generated API documentation and correct v4 guidance'
+          git commit --quiet -m 'build: generate configuration metadata and retire stale client guidance'
+          git ls-files --error-unmatch sample/sample-java/src/main/resources/application.yml sample/sample-kotlin/src/main/resources/application.yml
           git push origin HEAD:refs/heads/build/java-first-auth
           git log -2 --format='%H %s'
-      - name: Verify H2 Redis HTTP and Java contracts and Maven publications
-        id: verify
+      - name: Verify H2 Redis HTTP Java and Maven publications
         run: |
           set -o pipefail
           ./gradlew check publishToMavenLocal --continue --no-daemon 2>&1 | tee "$RUNNER_TEMP/verification.log"
@@ -66,39 +66,44 @@ jobs:
           mkdir -p "$RUNNER_TEMP/contract-results"
           find . -path '*/build/test-results/test/TEST-*.xml' -exec cp --parents {} "$RUNNER_TEMP/contract-results" \;
       - name: Verify PostgreSQL concurrency and transaction boundaries
-        if: success()
+        if: ${{ !cancelled() && steps.commit.outcome == 'success' }}
         env:
           OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri
           OGIRI_TEST_JDBC_USER: ogiri
           OGIRI_TEST_JDBC_PASSWORD: ogiri
         run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
       - name: Test standalone Maven consumer
-        if: success()
+        if: ${{ !cancelled() && steps.commit.outcome == 'success' }}
         run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
-      - name: Inspect publication contents and remaining legacy references
+      - name: Inspect actual publication contents and contract results
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile
+          import json, os
           import xml.etree.ElementTree as E
-          import os
-          total = failed = skipped = 0
-          for p in Path(os.environ['RUNNER_TEMP']).glob('contract-results/**/TEST-*.xml'):
-              root=E.parse(p).getroot()
-              total+=int(root.get('tests',0)); failed+=int(root.get('failures',0))+int(root.get('errors',0)); skipped+=int(root.get('skipped',0))
-              for case in root.findall('testcase'):
-                  for error in list(case.findall('failure'))+list(case.findall('error')):
-                      print(p,case.get('name'),error.get('message'),(error.text or '')[:3000])
-              if root.findall('.//failure'): print((root.findtext('system-out') or '')[-10000:])
-          print(f'TEST SUMMARY: total={total} failed={failed} skipped={skipped}')
+          for label, directory, pattern in [('H2/Redis/HTTP/Java', Path(os.environ['RUNNER_TEMP'])/'contract-results', '**/TEST-*.xml'), ('PostgreSQL', Path('ogiri-jpa/build/test-results/test'), 'TEST-*.xml'), ('Maven', Path('sample/sample-java/target/surefire-reports'), 'TEST-*.xml')]:
+              total = failed = skipped = 0
+              for p in directory.glob(pattern):
+                  root=E.parse(p).getroot()
+                  total+=int(root.get('tests',0)); failed+=int(root.get('failures',0))+int(root.get('errors',0)); skipped+=int(root.get('skipped',0))
+                  for case in root.findall('testcase'):
+                      for error in list(case.findall('failure'))+list(case.findall('error')):
+                          print(p,case.get('name'),error.get('message'),(error.text or '')[:3000])
+                  if root.findall('.//failure'): print((root.findtext('system-out') or '')[-10000:])
+              print(f'{label}: total={total} failed={failed} skipped={skipped}')
           for p in Path('.').glob('ogiri-*/build/libs/*-javadoc.jar'):
               with ZipFile(p) as archive:
                   pages=[n for n in archive.namelist() if n.endswith('.html')]
-                  print('API PAGES',p,len(pages))
-                  assert pages, f'Empty API documentation: {p}'
+                  print('API PAGES',p,len(pages)); assert pages
+          with ZipFile('ogiri-core/build/libs/ogiri-core-4.0.0.jar') as archive:
+              metadata=json.loads(archive.read('META-INF/spring-configuration-metadata.json'))
+              names={p['name'] for p in metadata['properties']}
+              print('CONFIGURATION METADATA',sorted(names))
+              assert 'ogiri.session.enabled' in names and 'ogiri.session.endpoints.base-path' in names
+              assert not any(n.startswith('ogiri.auth.') for n in names)
           PY
-          git grep -n -E 'ogiri-jdbc|ogiri-caffeine|OgiriTokenService|sample-react|ogiri-client|coverage gates|health indicator' -- ':!CHANGELOG.md' ':!gradle/wrapper/gradle-wrapper.jar' || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
