@@ -27,8 +27,11 @@ import org.springframework.http.MediaType
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.provisioning.InMemoryUserDetailsManager
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.post
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RestController
 
 @SpringBootTest(
     classes = [OgiriEndpointAutoConfigurationTest.TestApplication::class],
@@ -39,6 +42,7 @@ import org.springframework.test.web.servlet.post
             "ogiri.session.token-hash.keys.test=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "ogiri.session.endpoints.enabled=true",
             "ogiri.session.endpoints.base-path=/api/session-auth",
+            "ogiri.session.public-paths[0]=/public-action",
         ],
 )
 @AutoConfigureMockMvc
@@ -73,14 +77,41 @@ class OgiriEndpointAutoConfigurationTest {
 
     mockMvc
         .post("/auth/sign-in") {
+          with(csrf())
           contentType = MediaType.APPLICATION_JSON
           content = """{"username":"user-42","password":"password"}"""
         }
         .andExpect { status { isUnauthorized() } }
   }
 
+  @Test
+  fun `starter keeps CSRF protection on unrelated public writes`() {
+    mockMvc.post("/public-action").andExpect { status { isForbidden() } }
+    mockMvc
+        .post("/public-action") { with(csrf()) }
+        .andExpect {
+          status { isOk() }
+          content { string("done") }
+        }
+  }
+
+  @Test
+  fun `a browser simple request cannot acquire the JSON sign-in exemption`() {
+    for (type in listOf(MediaType.TEXT_PLAIN, MediaType.APPLICATION_FORM_URLENCODED)) {
+      mockMvc
+          .post("/api/session-auth/sign-in") {
+            contentType = type
+            content = """{"username":"user-42","password":"password"}"""
+          }
+          .andExpect { status { isForbidden() } }
+    }
+  }
+
   @SpringBootApplication
+  @RestController
   class TestApplication {
+    @PostMapping("/public-action") fun publicAction(): String = "done"
+
     @Bean fun sessionStore(): SessionStore = InMemorySessionStore()
 
     @Bean

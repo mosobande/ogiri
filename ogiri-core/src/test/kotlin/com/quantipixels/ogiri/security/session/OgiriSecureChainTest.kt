@@ -37,6 +37,7 @@ import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.provisioning.InMemoryUserDetailsManager
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.get
@@ -74,7 +75,8 @@ class OgiriSecureChainTest {
         .andExpect { status { isUnauthorized() } }
     mockMvc.get("/auth/session").andExpect { status { isUnauthorized() } }
     mockMvc.get("/auth/sessions").andExpect { status { isUnauthorized() } }
-    mockMvc.delete("/auth/sign-out").andExpect { status { isUnauthorized() } }
+    mockMvc.delete("/auth/sign-out").andExpect { status { isForbidden() } }
+    mockMvc.delete("/auth/sign-out") { with(csrf()) }.andExpect { status { isUnauthorized() } }
   }
 
   @Test

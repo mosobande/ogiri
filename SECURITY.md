@@ -79,3 +79,9 @@ Run the local security checks with:
 ## Disclosure
 
 For a confirmed vulnerability, maintainers will prepare supported-line patches, migration guidance, a GitHub security advisory, and a CVE when appropriate before public disclosure. Published advisories will identify affected versions and whether session invalidation or key rotation is required.
+
+## Header transport and CSRF
+
+The starter keeps Spring's CSRF filter enabled. In header mode, only requests carrying an explicit Ogiri credential and POST JSON sign-in at the configured endpoint are exempt. Other unsafe requests, including unrelated public routes and browser-simple sign-in submissions, still require a CSRF token. Cookie mode has no such exemptions. Applying Ogiri to an application-owned chain does not change its CSRF policy.
+
+Do not have a reverse proxy translate ambient browser cookies into authorization headers without enforcing CSRF upstream. For that deployment, use a deliberately configured application security chain. Header transport is not evidence that a proxy's upstream authentication was non-ambient.

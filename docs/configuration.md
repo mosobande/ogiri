@@ -84,3 +84,5 @@ Cleanup is disabled by default. Enabling it requires both `SessionManager` and a
 ## Distributed rate limiting
 
 Enabling rate limiting requires an `OgiriRateLimiter` and a window of at least one millisecond. With `ogiri-redis`, Ogiri hashes IP/normalized-identifier keys and uses one atomic Redis script per bucket. Forwarded headers are not trusted by default. Rejections use RFC 9457 problem details, status `429`, and `Retry-After`.
+
+In the starter-owned header chain, CSRF exemptions are limited to explicit Ogiri credentials and POST JSON sign-in. Public unsafe endpoints still require CSRF tokens unless your application configures a narrower policy. Cookie mode keeps CSRF protection on every unsafe request.

@@ -40,6 +40,7 @@ import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfi
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.http.HttpMethod
+import org.springframework.http.MediaType
 import org.springframework.scheduling.TaskScheduler
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
 import org.springframework.security.authentication.AccountStatusException
@@ -50,11 +51,14 @@ import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
+import org.springframework.security.core.AuthenticationException
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.core.userdetails.UsernameNotFoundException
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher
+import org.springframework.security.web.util.matcher.RequestMatcher
 
 /**
  * Spring Boot auto-configuration for the session subsystem.
@@ -368,8 +372,27 @@ public open class OgiriSessionAutoConfiguration {
           it.anyRequest().authenticated()
         }
     if (properties.transport != OgiriTransport.COOKIE) {
-      // This starter-owned chain accepts no ambient cookie, form-login, or Basic credentials.
-      http.csrf { it.disable() }
+      val credentials = OgiriRequestCredentialResolver(properties)
+      val signIn =
+          PathPatternRequestMatcher.withDefaults()
+              .matcher(HttpMethod.POST, "${properties.endpoints.basePath}/sign-in")
+      // Exempt explicit, non-ambient credentials, not every request in the application.
+      http.csrf { csrf ->
+        csrf.ignoringRequestMatchers(
+            RequestMatcher { request ->
+              val jsonSignIn =
+                  properties.endpoints.enabled &&
+                      signIn.matches(request) &&
+                      MediaType.APPLICATION_JSON_VALUE.equals(
+                          request.contentType?.substringBefore(';')?.trim(), ignoreCase = true)
+              jsonSignIn ||
+                  try {
+                    credentials.resolve(request) != null
+                  } catch (_: AuthenticationException) {
+                    false
+                  }
+            })
+      }
     }
     return http.build()
   }
