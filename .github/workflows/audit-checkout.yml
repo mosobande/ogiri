@@ -1,0 +1,22 @@
+name: Audit checkout
+on:
+  push:
+    branches: [build/java-first-auth]
+permissions:
+  contents: read
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export repository for local audit
+        run: git bundle create "$RUNNER_TEMP/ogiri.bundle" --all
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ogiri-audit-checkout
+          path: ${{ runner.temp }}/ogiri.bundle
+          retention-days: 1
