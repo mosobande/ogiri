@@ -24,9 +24,6 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Bean
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
-import org.springframework.security.authentication.AuthenticationManager
-import org.springframework.security.authentication.BadCredentialsException
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.provisioning.InMemoryUserDetailsManager
@@ -42,7 +39,6 @@ import org.springframework.test.web.servlet.post
             "ogiri.session.token-hash.keys.test=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "ogiri.session.endpoints.enabled=true",
             "ogiri.session.endpoints.base-path=/api/session-auth",
-            "ogiri.session.public-paths[0]=/api/session-auth/sign-in",
         ],
 )
 @AutoConfigureMockMvc
@@ -91,13 +87,5 @@ class OgiriEndpointAutoConfigurationTest {
     fun userDetailsService(): UserDetailsService =
         InMemoryUserDetailsManager(
             User.withUsername("user-42").password("{noop}password").roles("USER").build())
-
-    @Bean
-    fun authenticationManager(users: UserDetailsService): AuthenticationManager =
-        AuthenticationManager { request ->
-          val user = users.loadUserByUsername(request.name)
-          if (request.credentials != "password") throw BadCredentialsException("bad_credentials")
-          UsernamePasswordAuthenticationToken.authenticated(user, null, user.authorities)
-        }
   }
 }

@@ -31,6 +31,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
     havingValue = "true",
 )
 public class OgiriProblemHandler {
+  @org.springframework.web.bind.annotation.ExceptionHandler(
+      org.springframework.http.converter.HttpMessageNotReadableException::class)
+  public fun malformedJson():
+      org.springframework.http.ResponseEntity<org.springframework.http.ProblemDetail> =
+      org.springframework.http.ResponseEntity.badRequest()
+          .header("Cache-Control", "no-store")
+          .body(
+              org.springframework.http.ProblemDetail.forStatusAndDetail(
+                  org.springframework.http.HttpStatus.BAD_REQUEST, "Malformed request body"))
+
   @ExceptionHandler(SessionError::class)
   public fun sessionError(error: SessionError): ResponseEntity<ProblemDetail> {
     val status =

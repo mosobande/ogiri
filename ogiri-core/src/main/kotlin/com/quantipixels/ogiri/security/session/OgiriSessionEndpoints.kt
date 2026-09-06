@@ -58,9 +58,9 @@ public fun interface OgiriClientContextResolver {
 
 /** JSON request accepted by the optional sign-in endpoint. */
 public data class SignInRequest(
-    @field:NotBlank val username: String,
-    @field:NotBlank val password: String,
-    val clientId: String? = null,
+    @field:NotBlank @field:jakarta.validation.constraints.Size(max = 255) val username: String,
+    @field:NotBlank @field:jakarta.validation.constraints.Size(max = 4096) val password: String,
+    @field:jakarta.validation.constraints.Size(max = 255) val clientId: String? = null,
 )
 
 /** Non-secret session representation returned by session-management endpoints. */

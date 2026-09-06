@@ -275,6 +275,12 @@ class OgiriJpaStarterIntegrationTest {
   @SpringBootApplication
   class TestApplication {
     @Bean
+    fun subjectStatusChecker(): com.quantipixels.ogiri.session.SubjectStatusChecker =
+        com.quantipixels.ogiri.session.SubjectStatusChecker {
+          it.realm.value == "users" && it.subjectId.value == "user-42"
+        }
+
+    @Bean
     fun users(): UserDetailsService =
         InMemoryUserDetailsManager(
             User.withUsername("user-42").password("{noop}password").roles("USER").build())

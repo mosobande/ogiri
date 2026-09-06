@@ -29,8 +29,7 @@ public class SessionId(public val value: String) {
 }
 
 /** Application-defined identifier of the account or principal that owns a session. */
-@JvmInline
-public value class SubjectId(public val value: String) {
+public data class SubjectId(public val value: String) {
   init {
     require(value.isNotBlank()) { "subject ID must not be blank" }
   }
@@ -44,8 +43,7 @@ public value class SubjectId(public val value: String) {
  * Realm names are safe for storage keys and must contain 1–63 lowercase ASCII letters, digits,
  * dots, underscores, or hyphens.
  */
-@JvmInline
-public value class Realm(public val value: String) {
+public data class Realm(public val value: String) {
   init {
     require(value.matches(REALM_PATTERN)) {
       "realm must contain only lowercase ASCII letters, digits, dots, underscores, or hyphens"
@@ -60,8 +58,7 @@ public value class Realm(public val value: String) {
 }
 
 /** Optional tenant boundary used to distinguish otherwise identical subjects. */
-@JvmInline
-public value class TenantId(public val value: String) {
+public data class TenantId(public val value: String) {
   init {
     require(value.isNotBlank()) { "tenant ID must not be blank" }
   }

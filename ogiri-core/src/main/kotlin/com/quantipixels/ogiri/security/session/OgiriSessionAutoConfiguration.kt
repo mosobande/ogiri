@@ -34,20 +34,26 @@ import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication
 import org.springframework.boot.autoconfigure.security.ConditionalOnDefaultWebSecurity
 import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
+import org.springframework.http.HttpMethod
 import org.springframework.scheduling.TaskScheduler
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
 import org.springframework.security.authentication.AccountStatusException
 import org.springframework.security.authentication.AccountStatusUserDetailsChecker
 import org.springframework.security.authentication.AuthenticationManager
+import org.springframework.security.authentication.ProviderManager
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.core.userdetails.UsernameNotFoundException
+import org.springframework.security.crypto.factory.PasswordEncoderFactories
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
 
 /**
@@ -57,6 +63,7 @@ import org.springframework.security.web.SecurityFilterChain
  * specific policy or infrastructure implementation backs off when a user bean is present.
  */
 @AutoConfiguration(before = [SecurityAutoConfiguration::class])
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(OgiriSessionProperties::class)
 @ConditionalOnProperty(
     prefix = "ogiri.session",
@@ -114,9 +121,15 @@ public open class OgiriSessionAutoConfiguration {
   @Bean
   @ConditionalOnBean(UserDetailsService::class)
   @ConditionalOnMissingBean
-  public open fun ogiriSubjectStatusChecker(users: UserDetailsService): SubjectStatusChecker {
+  public open fun ogiriSubjectStatusChecker(
+      users: UserDetailsService,
+      properties: OgiriSessionProperties = OgiriSessionProperties()
+  ): SubjectStatusChecker {
     val checker = AccountStatusUserDetailsChecker()
     return SubjectStatusChecker { subject ->
+      if (subject.realm.value != properties.realm || subject.tenantId != null) {
+        return@SubjectStatusChecker false
+      }
       try {
         checker.check(users.loadUserByUsername(subject.subjectId.value))
         true
@@ -130,7 +143,6 @@ public open class OgiriSessionAutoConfiguration {
 
   /** Builds the session coordinator once persistence and subject-status policies are available. */
   @Bean
-  @ConditionalOnBean(SessionStore::class, SubjectStatusChecker::class)
   @ConditionalOnMissingBean
   public open fun ogiriSessionManager(
       store: SessionStore,
@@ -161,8 +173,20 @@ public open class OgiriSessionAutoConfiguration {
   @Bean
   @ConditionalOnBean(SessionManager::class)
   @ConditionalOnMissingBean
-  public open fun ogiriAuthorityResolver(): OgiriAuthorityResolver = OgiriAuthorityResolver {
-    emptyList()
+  public open fun ogiriAuthorityResolver(
+      users: ObjectProvider<UserDetailsService>,
+      properties: OgiriSessionProperties
+  ): OgiriAuthorityResolver = OgiriAuthorityResolver { session ->
+    val directory = users.getIfAvailable()
+    if (directory == null ||
+        session.subject.realm.value != properties.realm ||
+        session.subject.tenantId != null) {
+      emptyList()
+    } else {
+      val user = directory.loadUserByUsername(session.subject.subjectId.value)
+      AccountStatusUserDetailsChecker().check(user)
+      user.authorities
+    }
   }
 
   @Bean
@@ -213,7 +237,7 @@ public open class OgiriSessionAutoConfiguration {
   ): OgiriClientContextResolver = OgiriClientContextResolver { request, requestedClientId ->
     com.quantipixels.ogiri.session.ClientContext(
         requestedClientId?.takeIf(String::isNotBlank) ?: identifiers.next(),
-        userAgent = request.getHeader("User-Agent"),
+        userAgent = request.getHeader("User-Agent")?.take(512),
         ipAddress = request.remoteAddr,
     )
   }
@@ -228,6 +252,8 @@ public open class OgiriSessionAutoConfiguration {
   public open fun ogiriSessionEndpointController(
       authenticationConfiguration: AuthenticationConfiguration,
       authenticationManagers: ObjectProvider<AuthenticationManager>,
+      users: ObjectProvider<UserDetailsService>,
+      encoders: ObjectProvider<PasswordEncoder>,
       sessions: SessionManager,
       subjectResolver: OgiriSubjectResolver,
       clientResolver: OgiriClientContextResolver,
@@ -239,7 +265,16 @@ public open class OgiriSessionAutoConfiguration {
   ): OgiriSessionEndpointController =
       OgiriSessionEndpointController(
           authenticationManagers.getIfAvailable {
-            authenticationConfiguration.authenticationManager
+            val directory = users.getIfAvailable()
+            if (directory == null) authenticationConfiguration.authenticationManager
+            else
+                ProviderManager(
+                    DaoAuthenticationProvider(directory).apply {
+                      setPasswordEncoder(
+                          encoders.getIfAvailable {
+                            PasswordEncoderFactories.createDelegatingPasswordEncoder()
+                          })
+                    })
           },
           sessions,
           subjectResolver,
@@ -319,6 +354,10 @@ public open class OgiriSessionAutoConfiguration {
         .with(configurer) {}
         .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
         .authorizeHttpRequests {
+          if (properties.endpoints.enabled) {
+            it.requestMatchers(HttpMethod.POST, "${properties.endpoints.basePath}/sign-in")
+                .permitAll()
+          }
           if (properties.publicPaths.isNotEmpty()) {
             it.requestMatchers(*properties.publicPaths.toTypedArray()).permitAll()
           }

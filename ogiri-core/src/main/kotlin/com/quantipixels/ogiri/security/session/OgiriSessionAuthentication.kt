@@ -18,13 +18,13 @@ import com.quantipixels.ogiri.session.SessionError
 import com.quantipixels.ogiri.session.SessionManager
 import jakarta.servlet.http.HttpServletRequest
 import java.nio.charset.StandardCharsets
+import java.security.Principal
 import org.springframework.http.HttpHeaders
 import org.springframework.security.authentication.AbstractAuthenticationToken
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.core.Authentication
 import org.springframework.security.core.GrantedAuthority
-import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.web.authentication.AuthenticationConverter
 
 /** Non-secret session identity exposed through Spring Security's [Authentication] principal. */
@@ -36,7 +36,9 @@ public data class OgiriSessionPrincipal(
     val clientId: String,
     val version: Long,
     val familyId: String,
-)
+) : Principal {
+  override fun getName(): String = subject
+}
 
 /** Maps an authenticated session to application-specific Spring Security authorities. */
 public fun interface OgiriAuthorityResolver {
@@ -52,24 +54,36 @@ public fun interface OgiriAuthorityResolver {
  */
 public class OgiriSessionAuthenticationToken
 private constructor(
-    private val rawCredential: String?,
+    private var rawCredential: String?,
     private val sessionPrincipal: OgiriSessionPrincipal?,
     authorities: Collection<GrantedAuthority>,
 ) : AbstractAuthenticationToken(authorities) {
   init {
-    isAuthenticated = sessionPrincipal != null
+    super.setAuthenticated(sessionPrincipal != null)
   }
 
   override fun getCredentials(): Any = rawCredential.orEmpty()
 
   override fun getPrincipal(): Any = sessionPrincipal ?: ""
 
+  override fun eraseCredentials() {
+    super.eraseCredentials()
+    rawCredential = null
+  }
+
+  override fun setAuthenticated(authenticated: Boolean) {
+    require(!authenticated) { "Use the authenticated factory after verification" }
+    super.setAuthenticated(false)
+  }
+
   public companion object {
     /** Creates a provider input carrying an unverified credential. */
+    @JvmStatic
     public fun unauthenticated(credential: String): OgiriSessionAuthenticationToken =
         OgiriSessionAuthenticationToken(credential, null, emptyList())
 
     /** Creates an authenticated token that contains no raw credential. */
+    @JvmStatic
     public fun authenticated(
         principal: OgiriSessionPrincipal,
         authorities: Collection<GrantedAuthority>,
@@ -123,9 +137,7 @@ public class OgiriBearerAuthenticationConverter(
 /** Authenticates [OgiriSessionAuthenticationToken] instances through [SessionManager]. */
 public class OgiriSessionAuthenticationProvider(
     private val sessions: SessionManager,
-    private val authorityResolver: OgiriAuthorityResolver = OgiriAuthorityResolver {
-      listOf(SimpleGrantedAuthority("ROLE_USER"))
-    },
+    private val authorityResolver: OgiriAuthorityResolver = OgiriAuthorityResolver { emptyList() },
 ) : AuthenticationProvider {
   override fun authenticate(authentication: Authentication): Authentication {
     val raw =
