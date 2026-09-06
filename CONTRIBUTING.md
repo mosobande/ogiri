@@ -1,121 +1,25 @@
-# Contributing to Ògiri
+# Contributing to Ogiri
 
-Thank you for your interest in contributing!
+Use Java 17+ and the checked-in Gradle wrapper. The current development line is the breaking v4 session library; do not add new consumers of the removed v3 token APIs.
 
-## Quick Start
+## Verify a change
 
-```bash
-# Clone and build
-git clone https://github.com/quantipixels/ogiri.git
-cd ogiri
-./gradlew build
-
-# Run tests
-./gradlew test
-
-# Format code
+```sh
 ./gradlew spotlessApply
+./gradlew check publishToMavenLocal
+mvn --batch-mode -f sample/sample-java/pom.xml verify
 ```
 
-## Ways to Contribute
+The Maven command tests actual published dependency metadata, not Gradle project dependencies. CI also runs the JPA contracts against PostgreSQL. Redis integration tests need Docker; a skipped local Redis suite is not verification.
 
-### Reporting Bugs
+Keep tests that independently protect current behavior: authentication, authorization, expiry, revocation, rotation races, identity isolation, database transactions and consumer integration. Avoid mock-call choreography, tests for removed implementations and duplicated framework behavior. Add a regression test when fixing a defect.
 
-Before reporting, check [existing issues](https://github.com/quantipixels/ogiri/issues).
+## Submit a pull request
 
-Include:
+Describe the user-visible problem, the change, compatibility consequences and verification results. Keep commits coherent by behavior. Use Conventional Commit subjects, for example `fix: preserve revocation during concurrent rotation`. Update existing guidance rather than adding an execution report to the repository.
 
-- Ògiri version
-- Java/Spring Boot version
-- Steps to reproduce
-- Expected vs actual behavior
+The library owns opaque session management and its adapters. Proposals for registration, account recovery, MFA or identity-provider orchestration need a separate scope decision; do not grow an identity platform incidentally.
 
-### Proposing Features
+Report bugs with the Ogiri, Java, Spring Boot and database versions, a reproducer, and expected versus actual behavior. Never include session credentials, passwords or signing keys. Report security concerns through [SECURITY.md](SECURITY.md).
 
-Open an issue describing:
-
-- Problem being solved
-- Proposed solution
-- Alternative approaches considered
-
-### Code Contributions
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make changes with tests
-4. Format code: `./gradlew spotlessApply`
-5. Run tests: `./gradlew test`
-6. Push and create PR
-
-## Code Guidelines
-
-- Follow existing code style
-- Format with `./gradlew spotlessApply`
-- Write tests for new features
-- Use descriptive test names: `` `should rotate token outside batch window` ``
-- Keep lines under 120 characters
-
-## Commit Messages
-
-Use [Conventional Commits](https://www.conventionalcommits.org/):
-
-```text
-feat: add chat sub-token renewal
-fix: prevent expired token renewal
-docs: add multi-tenant setup guide
-test: add edge case for concurrent token creation
-refactor: extract common validation logic
-```
-
-## Pull Request Template
-
-```markdown
-## Description
-
-Brief description of changes
-
-## Motivation
-
-Fixes #123 / Related to #456
-
-## Changes
-
-- Change 1
-- Change 2
-
-## Testing
-
-- [ ] Unit tests added
-- [ ] Manual testing performed
-
-## Checklist
-
-- [ ] Tests pass (`./gradlew test`)
-- [ ] Code formatted (`./gradlew spotlessApply`)
-- [ ] Documentation updated
-```
-
-## Areas for Contribution
-
-**High Priority:**
-
-- R2DBC examples for reactive SQL
-- Spring Data JDBC integration guide
-- GraphQL authentication example
-- Performance benchmarking
-
-**Medium Priority:**
-
-- Additional NoSQL examples (Firestore, DynamoDB)
-- OAuth2 integration examples
-- Rate limiting examples
-
-## Getting Help
-
-- Questions: Open a GitHub Discussion
-- Security issues: See [security.md](security.md)
-- Development setup: See [development.md](development.md)
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+See the [development guide](docs/development.md) and [publishing guide](PUBLISHING.md). Contributions are licensed under Apache-2.0.

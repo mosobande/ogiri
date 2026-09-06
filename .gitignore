@@ -65,3 +65,6 @@ dist/
 **/coverage/
 reports/
 plans/
+
+# Maven consumer build outputs
+target/
