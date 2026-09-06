@@ -37,18 +37,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = a6add2ab7fe650a12541a381c6d2861a62773304
-          for blob in 50d797248c4a239b258c8b210703a69e5d3260d5 ae12609813e07cf4645c2c8bdd260a9115025a62 6d3f1adc8e883b01b0bfdb064f28c0e0bfe74167; do
+          for blob in 50d797248c4a239b258c8b210703a69e5d3260d5 ae12609813e07cf4645c2c8bdd260a9115025a62 6d3f1adc8e883b01b0bfdb064f28c0e0bfe74167 9a0c0ebceffd8e8d3527a4f0d772a2e0557c0483; do
             gh api "repos/quantipixels/ogiri/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
             python "$RUNNER_TEMP/change.py"
           done
           python - <<'PY'
           from pathlib import Path
-          p=Path('.gitignore')
-          s=p.read_text()
+          p=Path('.gitignore'); s=p.read_text()
           if 'target/' not in s.splitlines(): p.write_text(s+'\n# Maven consumer build outputs\ntarget/\n')
           PY
           ./gradlew spotlessApply --no-daemon
           git restore --source=HEAD --staged --worktree .github/workflows
+          test "$(git hash-object ogiri-jpa/src/main/resources/META-INF/ogiri/schema-postgresql.sql)" = ca46711f4ef7a0c9d51742528c01c68696eca7cf
           git diff --check
           git status --short
           git diff --stat
@@ -69,8 +69,7 @@ jobs:
           import json
           version=Path('.ogiri-version').read_text().strip()
           for module in ['ogiri-session-core','ogiri-core','ogiri-jpa','ogiri-redis','ogiri-test']:
-              p=Path(module)/'build/libs'/f'{module}-{version}-javadoc.jar'
-              with ZipFile(p) as archive:
+              with ZipFile(Path(module)/'build/libs'/f'{module}-{version}-javadoc.jar') as archive:
                   pages=[n for n in archive.namelist() if n.endswith('.html')]
                   print('API PAGES',module,len(pages)); assert pages
           with ZipFile(f'ogiri-core/build/libs/ogiri-core-{version}.jar') as archive:
@@ -80,6 +79,9 @@ jobs:
               required={'ogiri.session.enabled','ogiri.session.transport','ogiri.session.endpoints.base-path','ogiri.session.cookie.secure','ogiri.session.token-hash.current-key-id','ogiri.session.rate-limit.window','ogiri.session.cleanup.batch-size'}
               assert required <= names, required-names
               assert not any(n.startswith('ogiri.auth.') for n in names)
+          with ZipFile(f'ogiri-jpa/build/libs/ogiri-jpa-{version}.jar') as archive:
+              assert archive.read('META-INF/ogiri/schema-postgresql.sql')
+              assert not any(n.startswith('db/migration/') and not n.endswith('/') for n in archive.namelist())
           PY
       - name: Verify PostgreSQL session contracts
         env:
@@ -87,8 +89,24 @@ jobs:
           OGIRI_TEST_JDBC_USER: ogiri
           OGIRI_TEST_JDBC_PASSWORD: ogiri
         run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
-      - name: Test standalone Maven consumer
-        run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
+      - name: Test standalone Maven consumer with H2
+        run: |
+          mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
+          mkdir -p "$RUNNER_TEMP/maven-h2"
+          cp sample/sample-java/target/surefire-reports/TEST-*.xml "$RUNNER_TEMP/maven-h2/"
+      - name: Validate packaged SQL and Maven consumer with PostgreSQL
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/ogiri
+          SPRING_DATASOURCE_USERNAME: ogiri
+          SPRING_DATASOURCE_PASSWORD: ogiri
+          SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+        run: |
+          set -euo pipefail
+          version="$(cat .ogiri-version)"
+          unzip -p "ogiri-jpa/build/libs/ogiri-jpa-$version.jar" META-INF/ogiri/schema-postgresql.sql |
+            docker exec -i "$POSTGRES_CONTAINER" psql -U ogiri -d ogiri -v ON_ERROR_STOP=1
+          mvn --batch-mode -f sample/sample-java/pom.xml -Ppostgresql -Dogiri.version="$version" verify
       - name: Commit and push verified logical changes
         run: |
           set -euo pipefail
@@ -98,21 +116,24 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionProperties.kt
           git commit --quiet -m 'fix: generate complete metadata for immutable session configuration'
-          git add ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionAutoConfiguration.kt ogiri-core/src/test/kotlin/example/consumer/OgiriEndpointAutoConfigurationTest.kt SECURITY.md docs/configuration.md
+          git add ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionAutoConfiguration.kt ogiri-core/src/test/kotlin/example/consumer/OgiriEndpointAutoConfigurationTest.kt ogiri-core/src/test/kotlin/com/quantipixels/ogiri/security/session/OgiriSecureChainTest.kt SECURITY.md docs/configuration.md
           git commit --quiet -m 'fix: retain CSRF protection outside explicit header authentication'
           git add .gitignore CONTRIBUTING.md
           git commit --quiet -m 'chore: align contribution checks and ignore Maven build outputs'
+          git add ogiri-jpa/src/main/resources README.md docs/database.md sample/sample-java/pom.xml
+          git commit --quiet -m 'fix: keep schema provisioning out of application Flyway history'
           git diff --exit-code
           git diff --cached --exit-code
           git push origin HEAD:refs/heads/build/java-first-auth
-          git log -3 --format='%H %s'
+          git log -4 --format='%H %s'
       - name: Summarize verified contracts
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
           import os, xml.etree.ElementTree as E
-          for label,directory,pattern in [('H2/Redis/HTTP/Java',Path(os.environ['RUNNER_TEMP'])/'contract-results','**/TEST-*.xml'),('PostgreSQL',Path('ogiri-jpa/build/test-results/test'),'TEST-*.xml'),('Maven',Path('sample/sample-java/target/surefire-reports'),'TEST-*.xml')]:
+          temp=Path(os.environ['RUNNER_TEMP'])
+          for label,directory,pattern in [('H2/Redis/HTTP/Java',temp/'contract-results','**/TEST-*.xml'),('JPA latest run',Path('ogiri-jpa/build/test-results/test'),'TEST-*.xml'),('Maven H2',temp/'maven-h2','TEST-*.xml'),('Maven latest run',Path('sample/sample-java/target/surefire-reports'),'TEST-*.xml')]:
               total=failed=skipped=0
               for p in directory.glob(pattern):
                   root=E.parse(p).getroot()
@@ -127,6 +148,7 @@ jobs:
           path: |
             ${{ runner.temp }}/verification.log
             ${{ runner.temp }}/contract-results
+            ${{ runner.temp }}/maven-h2
             **/build/test-results/test/*.xml
             **/build/libs/*.jar
             **/build/publications/mavenJava/pom-default.xml
