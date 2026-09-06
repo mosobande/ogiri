@@ -26,18 +26,33 @@ jobs:
           test "$(git rev-parse HEAD)" = 73eef6171c081703cd98bac63968107a428a051d
           gh api repos/quantipixels/ogiri/git/blobs/1ef0457416d76ecb53a95baac2428da20ac5f95a --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
           python "$RUNNER_TEMP/change.py"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionProperties.kt')
+          s=p.read_text(); assert 'listOf("/auth/sign-in", "/actuator/health")' in s
+          p.write_text(s.replace('listOf("/auth/sign-in", "/actuator/health")', 'listOf("/actuator/health")'))
+          p=Path('ogiri-core/src/main/resources/META-INF/spring.factories')
+          if p.exists():
+              text=p.read_text()
+              if 'OgiriMissingBeanFailureAnalyzer' in text:
+                  print('Retiring v3 failure-analyzer registration:', text)
+                  p.unlink()
+          PY
+          git restore --source=HEAD --staged --worktree .github/workflows
       - name: Format source
         run: ./gradlew spotlessApply --no-daemon
       - name: Commit the coherent library migration
         run: |
           set -euo pipefail
+          git restore --source=HEAD --staged --worktree .github/workflows
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'refactor!: retire v3 adapters and ship native Maven consumers'
+          git commit --quiet -m 'refactor!: retire v3 adapters and ship native Maven consumers'
           git push origin HEAD:refs/heads/build/java-first-auth
-          git rev-parse HEAD
+          git log -1 --format='%H %s'
+          git diff --stat HEAD^
       - name: Verify and publish locally
         run: |
           set -o pipefail
@@ -58,7 +73,7 @@ jobs:
                   for error in list(case.findall('failure')) + list(case.findall('error')):
                       print(p, case.get('name'), error.get('message'), (error.text or '')[:3000])
               if root.findall('.//failure'):
-                  print((root.findtext('system-out') or '')[-14000:])
+                  print((root.findtext('system-out') or '')[-10000:])
           print(f'TEST SUMMARY: total={total} failed={failed} skipped={skipped}')
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
