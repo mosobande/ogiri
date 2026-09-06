@@ -31,16 +31,27 @@ jobs:
           java-version: "17"
           distribution: temurin
           cache: gradle
-      - name: Apply the reviewed metadata correction
+      - name: Apply reviewed corrections to the expected candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = a6add2ab7fe650a12541a381c6d2861a62773304
-          gh api repos/quantipixels/ogiri/git/blobs/50d797248c4a239b258c8b210703a69e5d3260d5 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
-          python "$RUNNER_TEMP/change.py"
+          for blob in 50d797248c4a239b258c8b210703a69e5d3260d5 ae12609813e07cf4645c2c8bdd260a9115025a62 6d3f1adc8e883b01b0bfdb064f28c0e0bfe74167; do
+            gh api "repos/quantipixels/ogiri/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
+            python "$RUNNER_TEMP/change.py"
+          done
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.gitignore')
+          s=p.read_text()
+          if 'target/' not in s.splitlines(): p.write_text(s+'\n# Maven consumer build outputs\ntarget/\n')
+          PY
           ./gradlew spotlessApply --no-daemon
           git restore --source=HEAD --staged --worktree .github/workflows
+          git diff --check
+          git status --short
+          git diff --stat
       - name: Verify all contracts and Maven publications
         run: |
           set -o pipefail
@@ -78,17 +89,23 @@ jobs:
         run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
       - name: Test standalone Maven consumer
         run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
-      - name: Commit and push the verified correction
+      - name: Commit and push verified logical changes
         run: |
           set -euo pipefail
+          git status --short
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionProperties.kt
           git commit --quiet -m 'fix: generate complete metadata for immutable session configuration'
-          test -z "$(git status --porcelain)"
+          git add ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionAutoConfiguration.kt ogiri-core/src/test/kotlin/example/consumer/OgiriEndpointAutoConfigurationTest.kt SECURITY.md docs/configuration.md
+          git commit --quiet -m 'fix: retain CSRF protection outside explicit header authentication'
+          git add .gitignore CONTRIBUTING.md
+          git commit --quiet -m 'chore: align contribution checks and ignore Maven build outputs'
+          git diff --exit-code
+          git diff --cached --exit-code
           git push origin HEAD:refs/heads/build/java-first-auth
-          git log -1 --format='%H %s'
+          git log -3 --format='%H %s'
       - name: Summarize verified contracts
         if: always()
         run: |
@@ -100,7 +117,7 @@ jobs:
               for p in directory.glob(pattern):
                   root=E.parse(p).getroot()
                   total+=int(root.get('tests',0)); failed+=int(root.get('failures',0))+int(root.get('errors',0)); skipped+=int(root.get('skipped',0))
-                  for error in root.findall('.//failure')+root.findall('.//error'): print(p,error.get('message'),(error.text or '')[:1500])
+                  for error in root.findall('.//failure')+root.findall('.//error'): print(p,error.get('message'),(error.text or '')[:2500])
               print(f'{label}: total={total} failed={failed} skipped={skipped}')
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
