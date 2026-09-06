@@ -8,6 +8,19 @@ jobs:
   implement:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ogiri
+          POSTGRES_USER: ogiri
+          POSTGRES_PASSWORD: ogiri
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -15,73 +28,84 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
-          java-version: '17'
+          java-version: "17"
           distribution: temurin
           cache: gradle
-      - name: Apply reviewed v4 cleanup
+      - name: Apply reviewed composition and publication corrections
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 73eef6171c081703cd98bac63968107a428a051d
-          gh api repos/quantipixels/ogiri/git/blobs/1ef0457416d76ecb53a95baac2428da20ac5f95a --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
+          test "$(git rev-parse HEAD)" = 7bf4120342c2b66ab46d2abaacb05417264bef44
+          gh api repos/quantipixels/ogiri/git/blobs/5932dc5bb2553a4cbd22349d376ae2e72714cf95 --jq .content | base64 --decode > "$RUNNER_TEMP/change.py"
           python "$RUNNER_TEMP/change.py"
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('ogiri-core/src/main/kotlin/com/quantipixels/ogiri/security/session/OgiriSessionProperties.kt')
-          s=p.read_text(); assert 'listOf("/auth/sign-in", "/actuator/health")' in s
-          p.write_text(s.replace('listOf("/auth/sign-in", "/actuator/health")', 'listOf("/actuator/health")'))
-          p=Path('ogiri-core/src/main/resources/META-INF/spring.factories')
-          if p.exists():
-              text=p.read_text()
-              if 'OgiriMissingBeanFailureAnalyzer' in text:
-                  print('Retiring v3 failure-analyzer registration:', text)
-                  p.unlink()
-          PY
-          git restore --source=HEAD --staged --worktree .github/workflows
       - name: Format source
         run: ./gradlew spotlessApply --no-daemon
-      - name: Commit the coherent library migration
+      - name: Commit the implementation and publication changes separately
         run: |
           set -euo pipefail
+          git diff -- .github/workflows
           git restore --source=HEAD --staged --worktree .github/workflows
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ogiri-core ogiri-session-core ogiri-jpa ogiri-redis
+          git commit --quiet -m 'fix: preserve host security and avoid nested session-store connections'
           git add -A
-          git commit --quiet -m 'refactor!: retire v3 adapters and ship native Maven consumers'
+          git commit --quiet -m 'build: publish generated API documentation and correct v4 guidance'
           git push origin HEAD:refs/heads/build/java-first-auth
-          git log -1 --format='%H %s'
-          git diff --stat HEAD^
-      - name: Verify and publish locally
+          git log -2 --format='%H %s'
+      - name: Verify H2 Redis HTTP and Java contracts and Maven publications
+        id: verify
         run: |
           set -o pipefail
           ./gradlew check publishToMavenLocal --continue --no-daemon 2>&1 | tee "$RUNNER_TEMP/verification.log"
+      - name: Preserve first-pass results
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/contract-results"
+          find . -path '*/build/test-results/test/TEST-*.xml' -exec cp --parents {} "$RUNNER_TEMP/contract-results" \;
+      - name: Verify PostgreSQL concurrency and transaction boundaries
+        if: success()
+        env:
+          OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri
+          OGIRI_TEST_JDBC_USER: ogiri
+          OGIRI_TEST_JDBC_PASSWORD: ogiri
+        run: ./gradlew :ogiri-jpa:test --tests '*OgiriJpaStarterIntegrationTest' --rerun-tasks --no-daemon
       - name: Test standalone Maven consumer
+        if: success()
         run: mvn --batch-mode -f sample/sample-java/pom.xml -Dogiri.version="$(cat .ogiri-version)" verify
-      - name: Summarize contract test results
+      - name: Inspect publication contents and remaining legacy references
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
+          from zipfile import ZipFile
           import xml.etree.ElementTree as E
+          import os
           total = failed = skipped = 0
-          for p in Path('.').glob('**/test-results/test/TEST-*.xml'):
-              root = E.parse(p).getroot()
-              total += int(root.get('tests', 0)); failed += int(root.get('failures', 0)) + int(root.get('errors', 0)); skipped += int(root.get('skipped', 0))
+          for p in Path(os.environ['RUNNER_TEMP']).glob('contract-results/**/TEST-*.xml'):
+              root=E.parse(p).getroot()
+              total+=int(root.get('tests',0)); failed+=int(root.get('failures',0))+int(root.get('errors',0)); skipped+=int(root.get('skipped',0))
               for case in root.findall('testcase'):
-                  for error in list(case.findall('failure')) + list(case.findall('error')):
-                      print(p, case.get('name'), error.get('message'), (error.text or '')[:3000])
-              if root.findall('.//failure'):
-                  print((root.findtext('system-out') or '')[-10000:])
+                  for error in list(case.findall('failure'))+list(case.findall('error')):
+                      print(p,case.get('name'),error.get('message'),(error.text or '')[:3000])
+              if root.findall('.//failure'): print((root.findtext('system-out') or '')[-10000:])
           print(f'TEST SUMMARY: total={total} failed={failed} skipped={skipped}')
+          for p in Path('.').glob('ogiri-*/build/libs/*-javadoc.jar'):
+              with ZipFile(p) as archive:
+                  pages=[n for n in archive.namelist() if n.endswith('.html')]
+                  print('API PAGES',p,len(pages))
+                  assert pages, f'Empty API documentation: {p}'
           PY
+          git grep -n -E 'ogiri-jdbc|ogiri-caffeine|OgiriTokenService|sample-react|ogiri-client|coverage gates|health indicator' -- ':!CHANGELOG.md' ':!gradle/wrapper/gradle-wrapper.jar' || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: ogiri-verification
           path: |
             ${{ runner.temp }}/verification.log
+            ${{ runner.temp }}/contract-results
             **/build/test-results/test/*.xml
             **/build/libs/*.jar
             **/build/publications/mavenJava/pom-default.xml
