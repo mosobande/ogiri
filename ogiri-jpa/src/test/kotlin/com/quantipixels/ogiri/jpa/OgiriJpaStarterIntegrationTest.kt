@@ -57,7 +57,9 @@ import org.springframework.transaction.support.TransactionTemplate
     classes = [OgiriJpaStarterIntegrationTest.TestApplication::class],
     properties =
         [
-            "spring.datasource.url=jdbc:h2:mem:ogiri-v4;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+            "spring.datasource.url=\${OGIRI_TEST_JDBC_URL:jdbc:h2:mem:ogiri-v4;DB_CLOSE_DELAY=-1;MODE=PostgreSQL}",
+            "spring.datasource.username=\${OGIRI_TEST_JDBC_USER:sa}",
+            "spring.datasource.password=\${OGIRI_TEST_JDBC_PASSWORD:}",
             "spring.jpa.hibernate.ddl-auto=create-drop",
             "spring.jpa.properties.hibernate.jdbc.time_zone=UTC",
             "ogiri.session.enabled=true",
@@ -104,6 +106,11 @@ class OgiriJpaStarterIntegrationTest {
         ))
     assertEquals(initial, store.findById(issued.session.id)?.lastUsedAt)
     assertFalse(store.recordUse(issued.session.id, issued.session.version + 1, initial))
+    assertFalse(
+        store.recordUse(
+            issued.session.id,
+            issued.session.version,
+            store.findById(issued.session.id)!!.expiresAt))
 
     store.revoke(
         RevokeSessionCommand(
@@ -270,6 +277,38 @@ class OgiriJpaStarterIntegrationTest {
           entityManager.find(ConsumerRecord::class.java, recordId).value
         }
     assertEquals("after-rotation", stored)
+  }
+
+  @Test
+  fun `cleanup is bounded and preserves active sessions`() {
+    val subject = SubjectRef(Realm("users"), SubjectId("user-42"), TenantId("cleanup-boundary"))
+    val expired = List(2) { sessions.issue(subject, ClientContext("expired-$it")).session.id }
+    val active = sessions.issue(subject, ClientContext("active")).session.id
+    TransactionTemplate(transactionManager).executeWithoutResult {
+      expired.forEach {
+        entityManager.find(OgiriSessionEntity::class.java, it.value).expiresAt = Instant.EPOCH
+      }
+    }
+    assertEquals(1, store.deleteExpiredPage(Instant.EPOCH.plusSeconds(1), 1))
+    assertEquals(1, store.deleteExpiredPage(Instant.EPOCH.plusSeconds(1), 1))
+    assertEquals(0, store.deleteExpiredPage(Instant.EPOCH.plusSeconds(1), 1))
+    assertTrue(store.findById(active) != null)
+    assertThrows(IllegalArgumentException::class.java) {
+      store.deleteExpiredPage(Instant.EPOCH, 10001)
+    }
+  }
+
+  @Test
+  fun `rotation remains committed when an unrelated consumer transaction rolls back`() {
+    val subject = SubjectRef(Realm("users"), SubjectId("user-42"), TenantId("rollback-boundary"))
+    val issued = sessions.issue(subject, ClientContext("browser"))
+    val codec = com.quantipixels.ogiri.session.OpaqueTokenCodec()
+    lateinit var rotated: String
+    TransactionTemplate(transactionManager).executeWithoutResult { transaction ->
+      rotated = sessions.rotate(issued.credential.encoded(codec)).credential.encoded(codec)
+      transaction.setRollbackOnly()
+    }
+    assertEquals(subject, sessions.authenticate(rotated).subject)
   }
 
   @SpringBootApplication

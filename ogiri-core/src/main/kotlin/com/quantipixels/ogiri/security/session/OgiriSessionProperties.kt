@@ -133,8 +133,8 @@ public data class OgiriSessionProperties(
       @field:NotBlank val keyPrefix: String = "ogiri:rate-limit:",
   ) {
     init {
-      require(!window.isNegative && !window.isZero) {
-        "ogiri.session.rate-limit.window must be positive"
+      require(!window.isNegative && window.toMillis() > 0) {
+        "ogiri.session.rate-limit.window must be at least one millisecond"
       }
     }
   }

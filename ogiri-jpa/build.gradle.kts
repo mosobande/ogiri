@@ -36,6 +36,7 @@ dependencyManagement {
 }
 
 dependencies {
+  testRuntimeOnly("org.postgresql:postgresql")
   api(project(":ogiri-core"))
   api("org.springframework.boot:spring-boot-starter-data-jpa")
   testImplementation("com.h2database:h2")

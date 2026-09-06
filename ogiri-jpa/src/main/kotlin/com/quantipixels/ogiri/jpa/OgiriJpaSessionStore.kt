@@ -34,7 +34,6 @@ import jakarta.persistence.PersistenceContext
 import java.time.Instant
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
-import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
@@ -50,32 +49,33 @@ public open class OgiriJpaSessionStore(
     @PersistenceContext private val entityManager: EntityManager,
     transactionManager: PlatformTransactionManager,
 ) : SessionStore {
-  private val lockCreation =
+  private val transactions =
       TransactionTemplate(transactionManager).apply {
         propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
         isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
       }
-  @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
-  override fun create(command: CreateSessionCommand): CreateSessionResult {
-    lockSubject(command.session.subject)
-    if (findEntityBySelector(command.session.selector) != null) {
-      return CreateSessionResult.SelectorConflict
-    }
-    val active = activeEntities(command.session.subject, command.session.createdAt, locked = true)
-    val evicted = mutableListOf<SessionId>()
-    if (active.size >= command.maximumActiveSessions) {
-      if (!command.evictOldestWhenFull) return CreateSessionResult.LimitReached
-      active.take(active.size - command.maximumActiveSessions + 1).forEach {
-        it.revokedAt = command.session.createdAt
-        it.revocationReason = RevocationReason.SESSION_LIMIT
-        evicted += SessionId(it.sessionId)
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  override fun create(command: CreateSessionCommand): CreateSessionResult =
+      withSubjectLock(command.session.subject) {
+        if (findEntityBySelector(command.session.selector) != null) {
+          return@withSubjectLock CreateSessionResult.SelectorConflict
+        }
+        val active =
+            activeEntities(command.session.subject, command.session.createdAt, locked = true)
+        val evicted = mutableListOf<SessionId>()
+        if (active.size >= command.maximumActiveSessions) {
+          if (!command.evictOldestWhenFull) return@withSubjectLock CreateSessionResult.LimitReached
+          active.take(active.size - command.maximumActiveSessions + 1).forEach {
+            it.revokedAt = command.session.createdAt
+            it.revocationReason = RevocationReason.SESSION_LIMIT
+            evicted += SessionId(it.sessionId)
+          }
+        }
+        val entity = command.session.toEntity()
+        entityManager.persist(entity)
+        entityManager.flush()
+        CreateSessionResult.Created(entity.toDomain(), evicted)
       }
-    }
-    val entity = command.session.toEntity()
-    entityManager.persist(entity)
-    entityManager.flush()
-    return CreateSessionResult.Created(entity.toDomain(), evicted)
-  }
 
   @Transactional(readOnly = true)
   override fun findBySelector(selector: String): StoredSession? =
@@ -174,20 +174,21 @@ public open class OgiriJpaSessionStore(
     return RevokeSessionResult.Revoked(refreshSession(command.sessionId))
   }
 
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   override fun revokeAll(
       subject: SubjectRef,
       revokedAt: Instant,
       reason: RevocationReason,
-  ): List<SessionId> {
-    lockSubject(subject)
-    val active = activeEntities(subject, revokedAt, locked = true)
-    active.forEach {
-      it.revokedAt = revokedAt
-      it.revocationReason = reason
-    }
-    entityManager.flush()
-    return active.map { SessionId(it.sessionId) }
-  }
+  ): List<SessionId> =
+      withSubjectLock(subject) {
+        val active = activeEntities(subject, revokedAt, locked = true)
+        active.forEach {
+          it.revokedAt = revokedAt
+          it.revocationReason = reason
+        }
+        entityManager.flush()
+        active.map { SessionId(it.sessionId) }
+      }
 
   @Transactional(readOnly = true)
   override fun listActive(subject: SubjectRef, at: Instant): List<StoredSession> =
@@ -212,19 +213,23 @@ public open class OgiriJpaSessionStore(
         .executeUpdate()
   }
 
-  private fun lockSubject(subject: SubjectRef) {
+  private fun <T : Any> withSubjectLock(subject: SubjectRef, operation: () -> T): T {
     val key = subject.key()
     ensureSubjectLock(key)
-    val lock =
-        entityManager.find(OgiriSubjectLockEntity::class.java, key)
-            ?: throw IllegalStateException("subject lock was not committed")
-    entityManager.lock(lock, LockModeType.PESSIMISTIC_WRITE)
+    return requireNotNull(
+        transactions.execute {
+          val lock =
+              entityManager.find(OgiriSubjectLockEntity::class.java, key)
+                  ?: throw IllegalStateException("subject lock was not committed")
+          entityManager.lock(lock, LockModeType.PESSIMISTIC_WRITE)
+          operation()
+        })
   }
 
   private fun ensureSubjectLock(key: String) {
     var insertionFailure: RuntimeException? = null
     try {
-      lockCreation.executeWithoutResult {
+      transactions.executeWithoutResult {
         if (entityManager.find(OgiriSubjectLockEntity::class.java, key) == null) {
           entityManager.persist(OgiriSubjectLockEntity(key))
           entityManager.flush()
@@ -236,7 +241,7 @@ public open class OgiriJpaSessionStore(
     if (insertionFailure == null) return
 
     val concurrentlyInserted =
-        lockCreation.execute {
+        transactions.execute {
           entityManager.find(OgiriSubjectLockEntity::class.java, key) != null
         } == true
     if (!concurrentlyInserted) throw insertionFailure

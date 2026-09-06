@@ -17,7 +17,6 @@ import com.quantipixels.ogiri.session.OpaqueTokenCodec
 import com.quantipixels.ogiri.session.SessionError
 import com.quantipixels.ogiri.session.SessionManager
 import jakarta.servlet.http.HttpServletRequest
-import java.nio.charset.StandardCharsets
 import java.security.Principal
 import org.springframework.http.HttpHeaders
 import org.springframework.security.authentication.AbstractAuthenticationToken
@@ -95,8 +94,8 @@ private constructor(
 /**
  * Strictly converts one Bearer authorization header into an Ogiri authentication request.
  *
- * Multiple headers, unsupported schemes, oversized values, and malformed opaque credentials are
- * rejected before cryptographic or persistence work.
+ * Multiple headers, oversized values, and malformed opaque credentials are rejected before
+ * cryptographic or persistence work. Other schemes are left to the host chain.
  */
 public class OgiriBearerAuthenticationConverter(
     private val maximumCredentialBytes: Int = 256,
@@ -108,19 +107,18 @@ public class OgiriBearerAuthenticationConverter(
   }
 
   override fun convert(request: HttpServletRequest): Authentication? {
-    val values = request.getHeaders(HttpHeaders.AUTHORIZATION).toList()
-    if (values.isEmpty()) return null
-    if (values.size != 1) throw BadCredentialsException("multiple_authorization_headers")
-    val value = values.single()
-    if (value.toByteArray(StandardCharsets.ISO_8859_1).size > maximumCredentialBytes + 7) {
-      throw BadCredentialsException("credential_too_large")
-    }
+    val values = request.getHeaders(HttpHeaders.AUTHORIZATION)
+    if (!values.hasMoreElements()) return null
+    val value = values.nextElement()
+    if (values.hasMoreElements()) throw BadCredentialsException("multiple_authorization_headers")
     val separator = value.indexOf(' ')
-    if (separator <= 0 || value.substring(0, separator).lowercase() != "bearer") {
-      throw BadCredentialsException("unsupported_authorization_scheme")
-    }
+    val scheme = if (separator < 0) value else value.substring(0, separator)
+    if (!scheme.equals("Bearer", ignoreCase = true)) return null
+    if (separator < 0) throw BadCredentialsException("malformed_bearer_credential")
+    if (value.length > maximumCredentialBytes + 7)
+        throw BadCredentialsException("credential_too_large")
     val credential = value.substring(separator + 1)
-    if (credential.toByteArray(StandardCharsets.ISO_8859_1).size > maximumCredentialBytes) {
+    if (credential.length > maximumCredentialBytes) {
       throw BadCredentialsException("credential_too_large")
     }
     if (!credential.matches(OPAQUE_CREDENTIAL)) {
@@ -140,28 +138,34 @@ public class OgiriSessionAuthenticationProvider(
     private val authorityResolver: OgiriAuthorityResolver = OgiriAuthorityResolver { emptyList() },
 ) : AuthenticationProvider {
   override fun authenticate(authentication: Authentication): Authentication {
-    val raw =
-        authentication.credentials as? String ?: throw BadCredentialsException("invalid_credential")
-    val authenticated =
-        try {
-          sessions.authenticate(raw)
-        } catch (error: SessionError) {
-          throw BadCredentialsException(error.code, error)
-        }
-    val principal =
-        OgiriSessionPrincipal(
-            subject = authenticated.subject.subjectId.value,
-            realm = authenticated.subject.realm.value,
-            tenant = authenticated.subject.tenantId?.value,
-            sessionId = authenticated.sessionId.value,
-            clientId = authenticated.client.clientId,
-            version = authenticated.version,
-            familyId = authenticated.familyId,
-        )
-    return OgiriSessionAuthenticationToken.authenticated(
-        principal,
-        authorityResolver.resolve(authenticated),
-    )
+    try {
+      val raw =
+          authentication.credentials as? String
+              ?: throw BadCredentialsException("invalid_credential")
+      val authenticated =
+          try {
+            sessions.authenticate(raw)
+          } catch (error: SessionError) {
+            throw BadCredentialsException(error.code, error)
+          }
+      val principal =
+          OgiriSessionPrincipal(
+              subject = authenticated.subject.subjectId.value,
+              realm = authenticated.subject.realm.value,
+              tenant = authenticated.subject.tenantId?.value,
+              sessionId = authenticated.sessionId.value,
+              clientId = authenticated.client.clientId,
+              version = authenticated.version,
+              familyId = authenticated.familyId,
+          )
+      return OgiriSessionAuthenticationToken.authenticated(
+          principal,
+          authorityResolver.resolve(authenticated),
+      )
+    } finally {
+      (authentication as? org.springframework.security.core.CredentialsContainer)
+          ?.eraseCredentials()
+    }
   }
 
   override fun supports(authentication: Class<*>): Boolean =

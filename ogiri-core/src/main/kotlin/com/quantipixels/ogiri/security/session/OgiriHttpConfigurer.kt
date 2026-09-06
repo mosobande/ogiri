@@ -43,12 +43,6 @@ public class OgiriHttpConfigurer(
     private val properties: OgiriSessionProperties,
 ) : AbstractHttpConfigurer<OgiriHttpConfigurer, HttpSecurity>() {
   override fun init(http: HttpSecurity) {
-    http
-        .formLogin { it.disable() }
-        .httpBasic { it.disable() }
-        .logout { it.disable() }
-        .requestCache { it.disable() }
-        .anonymous { it.disable() }
     val forbidden = AccessDeniedHandlerImpl()
     http.exceptionHandling {
       it.authenticationEntryPoint(entryPoint).accessDeniedHandler { request, response, denied ->
@@ -77,10 +71,6 @@ public class OgiriHttpConfigurer(
                 .csrfTokenRequestHandler(OgiriSpaCsrfTokenRequestHandler())
           }
           .addFilterAfter(OgiriCsrfCookieFilter(), CsrfFilter::class.java)
-    } else {
-      // Header credentials are not ambient browser authority; CSRF applies only to cookie mode.
-      // lgtm[java/spring-disabled-csrf-protection]
-      http.csrf { it.disable() }
     }
   }
 

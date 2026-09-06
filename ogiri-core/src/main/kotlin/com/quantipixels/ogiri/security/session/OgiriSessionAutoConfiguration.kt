@@ -351,6 +351,10 @@ public open class OgiriSessionAutoConfiguration {
       properties: OgiriSessionProperties,
   ): SecurityFilterChain {
     http
+        .formLogin { it.disable() }
+        .httpBasic { it.disable() }
+        .logout { it.disable() }
+        .requestCache { it.disable() }
         .with(configurer) {}
         .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
         .authorizeHttpRequests {
@@ -363,6 +367,10 @@ public open class OgiriSessionAutoConfiguration {
           }
           it.anyRequest().authenticated()
         }
+    if (properties.transport != OgiriTransport.COOKIE) {
+      // This starter-owned chain accepts no ambient cookie, form-login, or Basic credentials.
+      http.csrf { it.disable() }
+    }
     return http.build()
   }
 }

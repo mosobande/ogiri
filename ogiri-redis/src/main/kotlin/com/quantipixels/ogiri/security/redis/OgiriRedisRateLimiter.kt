@@ -36,7 +36,9 @@ public class OgiriRedisRateLimiter(
       now: Instant,
   ): OgiriRateLimitDecision {
     require(permits > 0) { "rate-limit permits must be positive" }
-    require(!window.isNegative && !window.isZero) { "rate-limit window must be positive" }
+    require(!window.isNegative && window.toMillis() > 0) {
+      "rate-limit window must be at least one millisecond"
+    }
     val redisKey = prefix + sha256(key)
     val result =
         redis.execute(SCRIPT, listOf(redisKey), window.toMillis().toString())
