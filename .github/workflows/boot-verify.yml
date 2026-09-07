@@ -4,42 +4,112 @@ on:
     branches: [build/ogiri-execution]
     paths: [.github/workflows/boot-verify.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ogiri
+          POSTGRES_PASSWORD: ogiri
+          POSTGRES_DB: ogiri_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U ogiri -d ogiri_test" --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root-test-only
+          MYSQL_USER: ogiri
+          MYSQL_PASSWORD: ogiri
+          MYSQL_DATABASE: ogiri_test
+        ports: ['3306:3306']
+        options: --health-cmd "mysqladmin ping -h 127.0.0.1" --health-interval 5s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: build/ogiri-0.1.0
           fetch-depth: 0
-          persist-credentials: false
-      - name: Reconstruct and validate native checkout transport
+      - name: Restore exact native commits with verified transport
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$RUNNER_TEMP/input"
+          mkdir -p "$RUNNER_TEMP/input" "$RUNNER_TEMP/proof"
           python - <<'PY'
           import os, subprocess, json, base64, pathlib, hashlib
           parts=['24ce2d100df908fc3aef15cbbb074ef5c1c19bbe','1531bbc4c8d1255247290b5d28188040177565e0','d225dfb220c988628b3bd6dffd86b1a0d21a2113','6c06421fc4e69c4e110de0da2570bce2f4f5bb68','99381c4ee0356283a1ef4bc0a7d8fbee3817ffd6','b00bda343f72cd7b98f17db5f78cd7f424779650','03a9d953a851938eaede511b5efdc0f10913fcf3','e70231211d7e44a3099200e445fd9f78a6ca6759','69af60fabee3de27137ab4708e04666d261b4723','027e9a7b2d02c29e77d1af2cca22cdc3ceedfba9','eb53a5b21e6df45de95a36900aa4b5c54579eff4','6e7097b93c6a303b83696f094706d3e1e469d394']
+          fixes={"4":[[69,71,""],[2878,2878,"n7"]],"5":[[1675,1676,"2"]],"7":[[330,332,""],[4001,4004,"z"]],"8":[[1645,1647,""],[4001,4004,"C"]],"9":[[2144,2148,"/N"],[2534,2539,"yK"],[2548,2550,""],[4007,4008,""]]}
           root=pathlib.Path(os.environ['RUNNER_TEMP'])/'input'
           output=b''
           for i,sha in enumerate(parts):
               obj=json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))
               text=''.join(obj['content'].split())
-              (root/f'part{i}.b64').write_text(text)
-              data=base64.b64decode(text)
-              (root/f'part{i}.bin').write_bytes(data)
-              output+=data
+              for a,b,value in reversed(fixes.get(str(i),[])): text=text[:a]+value+text[b:]
+              output+=base64.b64decode(text,validate=True)
           (root/'candidate.bundle').write_bytes(output)
-          actual=hashlib.sha256(output).hexdigest()
-          print('Transport SHA256:',actual)
-          assert actual=='20379c4d43347e02862e0e95c4171c86ea68dd0a7c7d12035765e583a34dd916', 'Transport must match the exact local native commits before execution'
+          assert hashlib.sha256(output).hexdigest()=='20379c4d43347e02862e0e95c4171c86ea68dd0a7c7d12035765e583a34dd916'
           PY
+          git fetch "$RUNNER_TEMP/input/candidate.bundle" HEAD
+          git checkout --detach c5cefd6db48d45d41a59df21b8a2d5d490fc58d8
+          git diff --check
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Test both databases and measure the verified authentication path
+        env:
+          OGIRI_TEST_JDBC_USER: ogiri
+          OGIRI_TEST_JDBC_PASSWORD: ogiri
+          PGPASSWORD: ogiri
+          MYSQL_PWD: ogiri
+        run: |
+          set -euo pipefail
+          for database in postgresql mysql; do
+            mkdir -p "$RUNNER_TEMP/proof/$database"
+            if [ "$database" = postgresql ]; then
+              export OGIRI_TEST_JDBC_URL=jdbc:postgresql://localhost:5432/ogiri_test
+            else
+              export OGIRI_TEST_JDBC_URL='jdbc:mysql://localhost:3306/ogiri_test?allowPublicKeyRetrieval=true&sslMode=DISABLED'
+            fi
+            mvn -B -ntp clean install > "$RUNNER_TEMP/proof/$database/core.log" 2>&1 || { tail -120 "$RUNNER_TEMP/proof/$database/core.log"; exit 1; }
+            if [ "$database" = postgresql ]; then
+              psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1 -c 'DROP TABLE ogiri_sessions, ogiri_subject_locks'
+              unzip -p ogiri/target/ogiri-0.1.0.jar META-INF/ogiri/schema-postgresql.sql | psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1
+            else
+              mysql -h 127.0.0.1 -u ogiri ogiri_test -e 'DROP TABLE ogiri_sessions, ogiri_subject_locks'
+              unzip -p ogiri/target/ogiri-0.1.0.jar META-INF/ogiri/schema-mysql.sql | mysql -h 127.0.0.1 -u ogiri ogiri_test
+            fi
+            mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml verify > "$RUNNER_TEMP/proof/$database/consumer.log" 2>&1 || { tail -150 "$RUNNER_TEMP/proof/$database/consumer.log"; exit 1; }
+            find . -path '*/target/surefire-reports/TEST-*.xml' -exec cp --parents {} "$RUNNER_TEMP/proof/$database/" \;
+            mvn -B -ntp -pl ogiri org.codehaus.mojo:exec-maven-plugin:3.5.0:java -Dexec.mainClass=com.quantipixels.ogiri.JdbcSessionsBenchmark -Dexec.classpathScope=test > "$RUNNER_TEMP/proof/$database/benchmark.log" 2>&1 || { tail -100 "$RUNNER_TEMP/proof/$database/benchmark.log"; exit 1; }
+            find . -name 'benchmark-*.json' -exec cp {} "$RUNNER_TEMP/proof/$database/" \;
+          done
+      - name: Rehearse unsigned local Central bundle without upload
+        run: |
+          mvn -B -ntp -Prelease -Dcentral.skipPublishing=true -Dgpg.skip=true -DskipTests deploy > "$RUNNER_TEMP/proof/release.log" 2>&1 || { tail -120 "$RUNNER_TEMP/proof/release.log"; exit 1; }
+          find . -path '*/central-publishing/*' -type f -exec cp --parents {} "$RUNNER_TEMP/proof/" \;
+      - name: Resolve runtime dependency inventories
+        run: |
+          mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false > "$RUNNER_TEMP/proof/sbom.log" 2>&1
+          cp target/bom.json "$RUNNER_TEMP/proof/library-bom.json"
+          mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false >> "$RUNNER_TEMP/proof/sbom.log" 2>&1
+          cp examples/spring-app/target/bom.json "$RUNNER_TEMP/proof/consumer-bom.json"
+      - name: Deliver verified native commits without rewriting history
+        run: |
+          test -z "$(git status --porcelain)"
+          test "$(git ls-remote origin refs/heads/build/ogiri-0.1.0 | cut -f1)" = 3a763b8305c7fdb41f5ded3779248ec7f28f4240
+          git push origin HEAD:refs/heads/build/ogiri-0.1.0
+          git rev-parse HEAD
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: boot-input
-          path: ${{ runner.temp }}/input
-          retention-days: 1
+          name: boot-proof
+          path: |
+            ${{ runner.temp }}/proof
+            **/target/surefire-reports/TEST-*.xml
+            ogiri/target/*.jar
+            ogiri-spring-boot-starter/target/*.jar
+          retention-days: 7
