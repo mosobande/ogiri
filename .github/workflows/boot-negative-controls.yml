@@ -38,7 +38,7 @@ jobs:
       - name: Prove baseline then independently challenge three security boundaries
         run: |
           python - <<'PY'
-          import os,subprocess,json,shutil,hashlib,xml.etree.ElementTree as E
+          import os,subprocess,json,shutil,xml.etree.ElementTree as E
           from pathlib import Path
           out=Path(os.environ['RUNNER_TEMP'])/'negative-controls';out.mkdir()
           code=Path('ogiri/src/main/java/com/quantipixels/ogiri/JdbcSessions.java')
@@ -57,7 +57,7 @@ jobs:
               return result.returncode,root
           result,root=run('baseline');assert result==0 and int(root.get('failures',0))+int(root.get('errors',0))==0
           cases=[
-              ('wrong-expiry','token_hash = ? AND expires_at > ','token_hash = ? AND expires_at < ','authenticationDoesNotWriteOrSlideExpiryAndExpiredRowsCannotAuthenticate'),
+              ('missing-expiry','token_hash = ? AND expires_at > ','token_hash = ? AND expires_at > 0 * ','authenticationDoesNotWriteOrSlideExpiryAndExpiredRowsCannotAuthenticate'),
               ('missing-tenant','tenant_id = ? AND subject_id','? IS NOT NULL AND subject_id','managementUsesEveryIdentityComponentAndNeverTrustsTheSessionIdAlone'),
               ('stale-host-snapshot','PROPAGATION_NOT_SUPPORTED','PROPAGATION_SUPPORTS','springTransactionsDoNotUndoCommittedSessionChangesOrCacheRevocation')]
           outcomes=[]
@@ -66,7 +66,6 @@ jobs:
                   assert original.count(before)==1,(label,'ambiguous mutation')
                   code.write_text(original.replace(before,after))
                   result,root=run(label,test)
-                  # Assertion failure, not compilation, SQL setup or missing infrastructure, is the oracle.
                   assert result!=0 and int(root.get('failures',0))>0 and int(root.get('errors',0))==0,label
                   outcomes.append({'mutation':label,'test':test,'outcome':'detected by executed assertion','failures':int(root.get('failures'))})
           finally:
@@ -75,7 +74,7 @@ jobs:
           subprocess.run(['git','diff','--exit-code'],check=True)
           outcomes={'head':subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),'database':'MySQL 8.4','mutations':outcomes,'source_restored':True,'baseline_tests':11,'restored_tests':int(root.get('tests'))}
           (out/'outcomes.json').write_text(json.dumps(outcomes,indent=2)+'\n')
-          gitbundle=out/'candidate.bundle';subprocess.run(['git','bundle','create',str(gitbundle),'origin/ori..HEAD'],check=True)
+          subprocess.run(['git','bundle','create',str(out/'candidate.bundle'),'origin/ori..HEAD'],check=True)
           print(json.dumps(outcomes,indent=2))
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
