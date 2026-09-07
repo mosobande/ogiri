@@ -1,0 +1,37 @@
+name: Greenfield verification
+on:
+  push:
+    branches: [build/ogiri-execution]
+    paths: [.github/workflows/greenfield-build.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ori
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Inspect uploaded native Git candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/quantipixels/ogiri/git/blobs/450ae4ffae56bb935a2d588ef9d3e6fe805f0e91 --jq .content | base64 --decode > "$RUNNER_TEMP/candidate.bundle"
+          git bundle verify "$RUNNER_TEMP/candidate.bundle"
+          git fetch "$RUNNER_TEMP/candidate.bundle" HEAD
+          git checkout --detach FETCH_HEAD
+          git log -3 --oneline
+          git ls-tree -r --name-only HEAD
+          for f in README.md pom.xml; do echo "=== $f ==="; cat "$f"; done
+          find . -path '*/src/main/java/*.java' -type f -exec sh -c 'echo "=== $1 ==="; cat "$1"' sh {} \;
+          git archive --format=tar.gz -o "$RUNNER_TEMP/greenfield-source.tar.gz" HEAD
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: greenfield-source
+          path: ${{ runner.temp }}/greenfield-source.tar.gz
+          retention-days: 7
