@@ -6,4 +6,4 @@ import java.time.Instant;
 import java.util.UUID;
 
 /** Public session metadata. The identifier is for management; it is not an authentication credential. */
-public record Session(UUID id, Subject subject, String client, Instant createdAt, Instant expiresAt) {}
+public record Session(UUID id, Subject subject, String client, Instant createdAt, Instant expiresAt) implements java.io.Serializable {}

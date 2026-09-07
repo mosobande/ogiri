@@ -6,6 +6,7 @@ package com.quantipixels.ogiri;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,6 +38,7 @@ public final class JdbcSessions {
     private final TransactionTemplate reads;
     private final Database database;
     private final SessionPolicy policy;
+    private final SessionCache cache;
 
     public JdbcSessions(DataSource source) { this(source, SessionPolicy.defaults()); }
 
@@ -46,6 +48,12 @@ public final class JdbcSessions {
 
     /** Use the application's transaction manager for this DataSource, including JPA-backed hosts. */
     public JdbcSessions(DataSource source, SessionPolicy policy, PlatformTransactionManager manager) {
+        this(source, policy, manager, null);
+    }
+
+    /** Opt into bounded-staleness lookups; a null cache preserves authoritative reads. */
+    public JdbcSessions(DataSource source, SessionPolicy policy, PlatformTransactionManager manager, SessionCache cache) {
+        this.cache = cache;
         this.policy = Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(source, "source");
         if (source instanceof org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy)
@@ -91,12 +99,14 @@ public final class JdbcSessions {
         });
     }
 
-    /** One authoritative indexed read, with no activity writes or positive-result cache. */
+    /** One indexed read by default; configured cache hits may use a bounded-age session snapshot. */
     public Optional<Session> authenticate(String token) {
         byte[] digest = Tokens.digest(token);
         if (digest == null) return Optional.empty();
-        return read(() -> jdbc.query("SELECT " + COLUMNS + " FROM ogiri_sessions WHERE token_hash = ? AND expires_at > " + database.now,
+        Supplier<Optional<Session>> authoritative = () -> read(() -> jdbc.query(
+                "SELECT " + COLUMNS + " FROM ogiri_sessions WHERE token_hash = ? AND expires_at > " + database.now,
                 JdbcSessions::row, digest).stream().findFirst());
+        return cache == null ? authoritative.get() : cache.lookup(digest, authoritative);
     }
 
     /** List live session metadata for an application-authorized complete subject. */
@@ -110,18 +120,33 @@ public final class JdbcSessions {
     /** Delete one owned session; foreign or absent identifiers return false. */
     public boolean revoke(Subject subject, UUID id) {
         Objects.requireNonNull(subject, "subject"); Objects.requireNonNull(id, "id");
-        return write(() -> jdbc.update("DELETE FROM ogiri_sessions WHERE " + OWNER + " AND id = ?",
-                subject.realm(), subject.tenantId(), subject.subjectId(), id.toString()) == 1);
+        List<byte[]> hashes = new ArrayList<>();
+        boolean removed = write(() -> {
+            if (cache != null) hashes.addAll(jdbc.queryForList(
+                    "SELECT token_hash FROM ogiri_sessions WHERE " + OWNER + " AND id = ?", byte[].class,
+                    subject.realm(), subject.tenantId(), subject.subjectId(), id.toString()));
+            return jdbc.update("DELETE FROM ogiri_sessions WHERE " + OWNER + " AND id = ?",
+                    subject.realm(), subject.tenantId(), subject.subjectId(), id.toString()) == 1;
+        });
+        if (cache != null) hashes.forEach(cache::evict); // Only after the independent commit succeeded.
+        return removed;
     }
 
     /** Serialize with issuance and revoke existing sessions; this does not ban future login. */
     public int revokeAll(Subject subject) {
         Objects.requireNonNull(subject, "subject");
-        return write(() -> {
+        List<byte[]> hashes = new ArrayList<>();
+        int removed = write(() -> {
             lock(subject);
+            // Expired entries cannot authenticate, so avoid collecting historical hashes.
+            if (cache != null) hashes.addAll(jdbc.queryForList(
+                    "SELECT token_hash FROM ogiri_sessions WHERE " + OWNER + " AND expires_at > " + database.now,
+                    byte[].class, subject.realm(), subject.tenantId(), subject.subjectId()));
             return jdbc.update("DELETE FROM ogiri_sessions WHERE " + OWNER,
                     subject.realm(), subject.tenantId(), subject.subjectId());
         });
+        if (cache != null) hashes.forEach(cache::evict);
+        return removed;
     }
 
     /** Bounded cleanup, safe with concurrent workers. Expiry enforcement never waits for cleanup. */

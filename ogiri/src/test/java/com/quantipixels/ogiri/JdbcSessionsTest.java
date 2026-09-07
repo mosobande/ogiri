@@ -226,6 +226,58 @@ class JdbcSessionsTest {
         assertThrows(IllegalArgumentException.class, () -> new Subject("users", "", String.valueOf((char) 0xD800)));
     }
 
+
+    @Test void cachedReadersAvoidDatabaseIoAndSharedEvictionTargetsOnlyRevokedSessions() {
+        var manager = new org.springframework.cache.concurrent.ConcurrentMapCacheManager("shared");
+        manager.setStoreByValue(true);
+        var region = java.util.Objects.requireNonNull(manager.getCache("shared"));
+        var offline = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var source = new DelegatingDataSource(dataSource) {
+            @Override public Connection getConnection() throws SQLException {
+                if (offline.get()) throw new SQLException("controlled database outage");
+                return super.getConnection();
+            }
+        };
+        var reader = new JdbcSessions(source, SessionPolicy.defaults(),
+                new org.springframework.jdbc.support.JdbcTransactionManager(source), new SessionCache(region, Duration.ofMinutes(1)));
+        var writer = new JdbcSessions(dataSource, SessionPolicy.defaults(),
+                new org.springframework.jdbc.support.JdbcTransactionManager(dataSource), new SessionCache(region, Duration.ofMinutes(1)));
+        var first = writer.issue(OWNER, "first");
+        var second = writer.issue(OWNER, "second");
+        var foreign = writer.issue(new Subject("users", "other-tenant", "user-42"), "foreign");
+        for (var issued : List.of(first, second, foreign)) assertEquals(issued.session(), reader.authenticate(issued.token()).orElseThrow());
+        offline.set(true);
+        assertEquals(first.session(), reader.authenticate(first.token()).orElseThrow(), "Hit must avoid database I/O");
+        assertTrue(reader.authenticate("malformed").isEmpty());
+        assertThrows(SessionStoreException.class, () -> reader.authenticate("og1_" + "A".repeat(43)));
+        assertFalse(writer.revoke(foreign.session().subject(), first.session().id()));
+        assertEquals(first.session(), reader.authenticate(first.token()).orElseThrow());
+        assertTrue(writer.revoke(OWNER, first.session().id()));
+        assertThrows(SessionStoreException.class, () -> reader.authenticate(first.token()), "Revocation evicts across readers sharing the region");
+        assertEquals(second.session(), reader.authenticate(second.token()).orElseThrow());
+        assertEquals(1, writer.revokeAll(OWNER));
+        assertThrows(SessionStoreException.class, () -> reader.authenticate(second.token()));
+        assertEquals(foreign.session(), reader.authenticate(foreign.token()).orElseThrow(), "Other owners are not evicted");
+        offline.set(false);
+        assertTrue(reader.authenticate(first.token()).isEmpty());
+        assertTrue(reader.authenticate(second.token()).isEmpty());
+    }
+
+    @Test void cacheEvictionOccursAfterCommitAndItsFailureCannotUndoRevocation() {
+        var issued = sessions.issue(OWNER, "phone");
+        var region = new org.springframework.cache.concurrent.ConcurrentMapCache("failure") {
+            @Override public boolean evictIfPresent(Object key) {
+                assertTrue(sessions.authenticate(issued.token()).isEmpty(), "Another connection must see the committed revocation");
+                throw new IllegalStateException("controlled cache eviction failure");
+            }
+        };
+        var cached = new JdbcSessions(dataSource, SessionPolicy.defaults(),
+                new org.springframework.jdbc.support.JdbcTransactionManager(dataSource), new SessionCache(region, Duration.ofSeconds(5)));
+        assertEquals(issued.session(), cached.authenticate(issued.token()).orElseThrow());
+        assertTrue(cached.revoke(OWNER, issued.session().id()));
+        assertTrue(sessions.authenticate(issued.token()).isEmpty());
+    }
+
     private static void sql(String sql) throws SQLException {
         try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) { statement.execute(sql); }
     }

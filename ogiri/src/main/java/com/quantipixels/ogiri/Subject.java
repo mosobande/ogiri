@@ -5,7 +5,7 @@ package com.quantipixels.ogiri;
 import java.util.Objects;
 
 /** Stable account identity. An empty tenantId denotes a non-tenanted realm, never a wildcard. */
-public record Subject(String realm, String tenantId, String subjectId) {
+public record Subject(String realm, String tenantId, String subjectId) implements java.io.Serializable {
     public Subject {
         Objects.requireNonNull(realm, "realm");
         Objects.requireNonNull(tenantId, "tenantId");
