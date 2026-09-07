@@ -41,7 +41,7 @@ jobs:
         with:
           ref: d3bcd23411eda70f799e958a7db4299f22ffd816
           fetch-depth: 0
-      - name: Restore the exact locally authored commit
+      - name: Restore the exact locally authored commits
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -50,15 +50,21 @@ jobs:
           python - <<'PY'
           import os, subprocess, json, base64, pathlib, hashlib
           parts=['bc9c64028618e7b1799bb3196be47397d5734834','af086e154cf68174c34988dfff18c4719a6f740a','7345e888f417e6b6bb1a99fda41af390a4d113fe','9042bac34156278db43cd5215fc43dff3a796004']
-          data=b''.join(base64.b64decode(json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))['content']) for sha in parts)
+          def blob(sha):
+              return base64.b64decode(json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))['content'])
+          data=b''.join(blob(sha) for sha in parts)
           assert hashlib.sha256(data).hexdigest()=='b2d8e05fad91ef15e03483851a630facb9f8b6835d896659f72ad62fc34c7885'
           path=pathlib.Path(os.environ['RUNNER_TEMP'])/'cache.bundle'
           path.write_bytes(data)
           subprocess.run(['git','fetch',str(path),'HEAD'],check=True)
+          patch=blob('e312fd337a851d7107642ebcc1b4993750529154').replace(b'\n diff --git ', b'\ndiff --git ')
+          assert hashlib.sha256(patch).hexdigest()=='54225b188c0c73db64fe3ef597c1bf949de65b482d302b561c95ebb65a717ae0'
+          (path.parent/'cache-correction.patch').write_bytes(patch)
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git cherry-pick 8b3e28046f660a301b42ce62b3e93a944dd37296
+          git am "$RUNNER_TEMP/cache-correction.patch"
           git diff --check
           git rev-parse HEAD > "$RUNNER_TEMP/cache-proof/source-head.txt"
       - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
@@ -89,7 +95,7 @@ jobs:
             mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml verify > "$out/consumer.log" 2>&1 || { tail -160 "$out/consumer.log"; exit 1; }
             find . -path '*/target/surefire-reports/TEST-*.xml' -exec cp --parents {} "$out" \;
           done
-      - name: Non-force push the verified coherent source change
+      - name: Non-force push the verified coherent source changes
         run: |
           set -euo pipefail
           test -z "$(git status --porcelain)"
