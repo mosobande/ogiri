@@ -1,81 +1,35 @@
-# Security Policy
+# Security boundaries
 
-## Supported versions
+Report vulnerabilities privately through GitHub's private vulnerability reporting for this repository when available. Do not post live credentials or exploit details in a public issue. No response-time or security-certification guarantee is made.
 
-| Line            | Security fixes                                               |
-| --------------- | ------------------------------------------------------------ |
-| 4.x             | Supported                                                    |
-| 3.x             | Critical fixes only during the published v4 migration window |
-| 2.x and earlier | Unsupported                                                  |
+## What the credential protects
 
-A release line becomes unsupported when the next major version has been generally available for 12 months. The release notes will announce the exact final support date.
+Ogiri generates 32 random bytes using the JDK's `SecureRandom`, encoded as a canonical `og1_` token. PostgreSQL stores only the token's SHA-256 digest and non-secret metadata. This design relies on 256 bits of generated entropy; it is **not** a password-hashing scheme and must never be reused for human-chosen secrets. A read-only database leak does not directly disclose usable credentials. Database write access, process compromise and a stolen plaintext token remain outside that protection.
 
-## Private reporting
+There is no keyed token-hash secret to distribute or rotate. That removes operational key-ring state, but also removes the separate-server-secret defence against an attacker who can rewrite credential digests. Protect database writes as authentication authority. A bearer token is sufficient to authenticate within the application's accepted identity context.
 
-Do not open a public issue for a suspected vulnerability.
+## Application responsibilities
 
-1. Prefer GitHub private vulnerability reporting for `quantipixels/ogiri`.
-2. If private reporting is unavailable, email **oluwaseyi@quantipixels.com** with subject `[SECURITY] Ogiri vulnerability`.
-3. Include the affected version/commit, affected module, reproduction, impact, and any proposed mitigation. Do not include real credentials, personal data, or production database contents.
+Authenticate before calling `issue`. Derive the complete owner from an authenticated principal before listing or revoking devices; never trust an arbitrary request-supplied owner. Validate every realm/tenant/account component in the Spring account loader. Protect management and recovery endpoints, enforce rate limits on sign-in, restrict CORS, configure CSRF for any ambient browser credentials, and use HTTPS. The example's JSON/custom-header sign-in exemption is valid only with its restricted-origin assumptions; it is not a universal CSRF policy.
 
-Response targets:
+Use stable account IDs. The adapter checks disabled, locked, account-expired and credentials-expired states at every request, after validating the token. It does not persist account-state changes or erase sessions during an authentication read. Re-enabling an account can therefore make its still-live sessions usable again unless the application explicitly revoked them. Password resets, compromise recovery, account deletion and permanent bans must revoke sessions in the application's identity workflow. Coordinate concurrent sign-in/recovery according to that workflow; Ogiri is not an atomic account-and-session transaction manager.
 
-- Acknowledge within 2 business days.
-- Provide an initial severity and remediation plan within 7 days.
-- Target a patch within 30 days for confirmed high/critical issues.
-- Coordinate disclosure after supported releases and migration guidance are available.
+No automatic rotation, refresh-token reuse detection, idle expiry, privilege-step-up or MFA is provided. A stolen token remains usable until its fixed expiry or explicit revocation, subject to current account checks. Choose a lifetime appropriate to the threat model; seven days is a configurable convenience default, not a universal security recommendation. Use a shorter lifetime and re-authentication, or an established identity provider, when stronger lifecycle controls are required.
 
-If the report exposes active exploitation or leaked credentials, state that clearly in the subject and revoke the credentials immediately.
+## Storage and failure behaviour
 
-## v4 security contract
+Only use a normal PostgreSQL connection pool, not a caller-bound transaction proxy. Reads must hit the authoritative primary, not a lagging replica. Already enlisted connections are rejected; each mutation commits independently before a credential or success result is returned. A connection lost during commit can leave the outcome unknown: the library throws and does not return a credential. Such an orphaned record can consume a slot until explicit revocation or expiry. No automatic retry pretends to resolve ambiguous commits.
 
-### Credential and storage model
+Authentication does not write activity timestamps or cache a positive result. Revocation removes the row, so later primary reads cannot resurrect it from a cache. In-flight statements or requests begun before revocation may finish. Expiry is evaluated at statement start; it does not interrupt a statement already executing. Advisory-lock hash collisions can serialize unrelated accounts but do not merge identities: every account-management SQL statement separately compares all three identity columns.
 
-- Session credentials are opaque `selector.verifier` values. The selector is an indexed, non-secret routing identifier; the 256-bit verifier is secret.
-- Stores persist only keyed HMAC digests. `IssuedSession.credential` is separate from immutable `StoredSession` and is the only core result containing plaintext.
-- HMAC keys are externally supplied, at least 256 bits, identified by key ID, and may overlap during rotation. Password encoders are not used for bearer credentials.
-- The authoritative `SessionStore` is consulted for authentication and revocation. Cache availability or stale cache data must never restore a revoked session.
+Pool acquisition and network timeouts are host configuration. SQL statements use a five-second query timeout. Database and account-directory outages fail closed and remain distinguishable from invalid tokens; do not convert availability failures into fabricated successful principals.
 
-### Rotation and revocation
+## Credential handling
 
-- A session accepts the current verifier and, only during compatibility grace, one previous verifier.
-- `previousValidUntil` is fixed by the successful compare-and-rotate command. Activity updates cannot extend it.
-- Rotation is optimistic compare-and-swap. Exactly one concurrent successor commits; losing callers receive a conflict and never receive a dead credential.
-- Reuse of the known previous verifier after its fixed deadline revokes the session family.
-- Logout binds to the stable authenticated session ID. User-wide and account-state revocation are immediate at the authoritative store.
+Deliver `IssuedSession.token()` explicitly once and exclude it from logs, analytics, exception messages and default JSON serialization. `IssuedSession.toString()` is redacted, but its string accessor is deliberately sensitive. `Session` and the adapter's principal contain no token or digest. Java strings and Spring's native bearer authentication may retain credential bytes in memory; no complete memory-erasure guarantee is claimed. Treat heap dumps as secrets.
 
-### Spring Security and transport
+Never send tokens in URLs or user-controlled client labels. Use secure client storage appropriate to the application. Browser HttpOnly session cookies require a different transport and CSRF arrangement; prefer Spring Session for that use case rather than embedding this bearer token in an ad hoc cookie wrapper.
 
-- Authentication and authorization must be composed in one selected `SecurityFilterChain`.
-- The optional starter chain permits only explicit `ogiri.session.public-paths` and ends with `anyRequest().authenticated()`.
-- Bearer is the default v4 transport. Cookie and devise-token-auth compatibility are explicit, mutually exclusive profiles.
-- Cookie mode uses `HttpOnly`, `Secure`, `SameSite`, aligned path/expiry, and CSRF protection by default. `SameSite=None` without `Secure` is rejected.
-- Credential and authentication-error responses use `Cache-Control: no-store`; bearer failures include `WWW-Authenticate` metadata.
-- Proxies must redact `Authorization`, `access-token`, cookies, and request bodies containing passwords. TLS is required outside isolated local development.
+## Verification limits
 
-### Subject authority
-
-- Sessions bind to `realm + optional tenant + opaque String subject ID`; mutable email addresses are not session identifiers.
-- A `SubjectStatusChecker` runs on every session authentication. Disabled, locked, expired, or credential-expired subjects are denied.
-- Applications should load sensitive roles live or include an application security version in their status policy.
-
-### Operations
-
-- Cleanup uses bounded pages. Clustered scheduling requires an `OgiriJobLease`; the JPA adapter provides a database lease.
-- Distributed rate limiting is optional. The Redis adapter hashes identifier keys, ignores forwarded-address headers by default, and returns `429` with `Retry-After`.
-- Session events are immutable, emitted only after a store command returns successfully, and exclude credentials. Micrometer tags are bounded-cardinality.
-- Redis deployments must use authentication, least-privilege ACLs, TLS where traffic leaves a trusted host, and a deployment-specific key prefix.
-
-## Verification and release controls
-
-Pull requests and releases run deterministic state-machine tests, full-chain MockMvc tests, JPA transaction/concurrency tests, Java/Kotlin consumer compilation, dependency analysis, CodeQL, coverage gates, and signed publication checks. A GitHub release is created only after every Maven Central module resolves from the immutable tag.
-
-Run the local security checks with:
-
-```bash
-./gradlew check dependencyCheckAnalyze
-```
-
-## Disclosure
-
-For a confirmed vulnerability, maintainers will prepare supported-line patches, migration guidance, a GitHub security advisory, and a CVE when appropriate before public disclosure. Published advisories will identify affected versions and whether session invalidation or key rotation is required.
+PostgreSQL behavioural tests, native HTTP consumer tests, static analysis and selected mutation probes are evidence, not proof of all interleavings, production performance or penetration-test coverage. Independent security review is still appropriate before production adoption.

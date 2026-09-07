@@ -1,6 +1,0 @@
-Contact: https://github.com/quantipixels/ogiri/security/advisories/new
-Contact: mailto:oluwaseyi@quantipixels.com
-Policy: https://github.com/quantipixels/ogiri/blob/ori/SECURITY.md
-Preferred-Languages: en
-Canonical: https://quantipixels.github.io/ogiri/.well-known/security.txt
-Expires: 2027-07-11T00:00:00Z

@@ -1,121 +1,24 @@
-# Contributing to Ògiri
+# Contributing
 
-Thank you for your interest in contributing!
+Use Java 17 or newer, Maven 3.9+, and a disposable PostgreSQL database. Tests deliberately fail rather than skip when the database is missing. They drop and recreate `ogiri_sessions`; **never point them at a development database containing valuable data or at production**.
 
-## Quick Start
-
-```bash
-# Clone and build
-git clone https://github.com/quantipixels/ogiri.git
-cd ogiri
-./gradlew build
-
-# Run tests
-./gradlew test
-
-# Format code
-./gradlew spotlessApply
+```sh
+docker run --rm --name ogiri-test -e POSTGRES_USER=ogiri -e POSTGRES_PASSWORD=ogiri   -e POSTGRES_DB=ogiri_test -p 127.0.0.1:5432:5432 -d postgres:16
+export OGIRI_TEST_JDBC_URL=jdbc:postgresql://localhost:5432/ogiri_test
+export OGIRI_TEST_JDBC_USER=ogiri
+export OGIRI_TEST_JDBC_PASSWORD=ogiri
+mvn --batch-mode --no-transfer-progress clean install
+mvn --batch-mode --no-transfer-progress -f examples/spring-app/pom.xml verify
 ```
 
-## Ways to Contribute
+The root build tests and installs the two code artifacts and their parent POM locally. The separate consumer verifies the installed dependency graph and real HTTP behaviour. CI also extracts and applies the exact SQL template from the built JAR before the consumer test. No Maven Central deployment is part of `install` or CI.
 
-### Reporting Bugs
+## Test admission
 
-Before reporting, check [existing issues](https://github.com/quantipixels/ogiri/issues).
+Every retained test must protect a material public contract, use an independent outcome oracle and name a plausible wrong implementation it would reject. Prefer the real PostgreSQL behaviour for transaction, lock, expiry and SQL claims. Test doubles are appropriate for an external fault that cannot be reliably induced otherwise, such as a controlled pre-commit failure or account-directory outage; they are not replacement stores.
 
-Include:
-
-- Ògiri version
-- Java/Spring Boot version
-- Steps to reproduce
-- Expected vs actual behavior
-
-### Proposing Features
-
-Open an issue describing:
-
-- Problem being solved
-- Proposed solution
-- Alternative approaches considered
-
-### Code Contributions
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make changes with tests
-4. Format code: `./gradlew spotlessApply`
-5. Run tests: `./gradlew test`
-6. Push and create PR
-
-## Code Guidelines
-
-- Follow existing code style
-- Format with `./gradlew spotlessApply`
-- Write tests for new features
-- Use descriptive test names: `` `should rotate token outside batch window` ``
-- Keep lines under 120 characters
-
-## Commit Messages
-
-Use [Conventional Commits](https://www.conventionalcommits.org/):
-
-```text
-feat: add chat sub-token renewal
-fix: prevent expired token renewal
-docs: add multi-tenant setup guide
-test: add edge case for concurrent token creation
-refactor: extract common validation logic
-```
-
-## Pull Request Template
-
-```markdown
-## Description
-
-Brief description of changes
-
-## Motivation
-
-Fixes #123 / Related to #456
+Do not add record-getter tests, mock call-order checks, assertions on private helpers, blanket coverage quotas, sleeps as clocks, or tests that restate implementation text. Reuse stronger existing coverage. Remove construction-history tests once a stronger public scenario subsumes them. A green suite is not sufficient evidence: challenge security predicates and resource boundaries with a focused mutation or negative control when practical.
 
 ## Changes
 
-- Change 1
-- Change 2
-
-## Testing
-
-- [ ] Unit tests added
-- [ ] Manual testing performed
-
-## Checklist
-
-- [ ] Tests pass (`./gradlew test`)
-- [ ] Code formatted (`./gradlew spotlessApply`)
-- [ ] Documentation updated
-```
-
-## Areas for Contribution
-
-**High Priority:**
-
-- R2DBC examples for reactive SQL
-- Spring Data JDBC integration guide
-- GraphQL authentication example
-- Performance benchmarking
-
-**Medium Priority:**
-
-- Additional NoSQL examples (Firestore, DynamoDB)
-- OAuth2 integration examples
-- Rate limiting examples
-
-## Getting Help
-
-- Questions: Open a GitHub Discussion
-- Security issues: See [security.md](security.md)
-- Development setup: See [development.md](development.md)
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+Keep account policy in the application, session invariants in the core and framework transport in Spring Security. A new module, configuration switch, dependency, provider interface or persistent state field needs a concrete current consumer. Update the owning README/Javadoc/security section rather than adding an audit-report archive. Make coherent logical commits and non-force pushes; do not edit version tags or applied application migrations.

@@ -1,3 +1,0 @@
-# SDKMAN! auto-env configuration
-# Auto-switches to Java 17 when entering this directory
-java=17.0.14-jbr
