@@ -13,36 +13,33 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
-import org.postgresql.ds.PGSimpleDataSource;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.core.io.ClassPathResource;
 
-class PostgresSessionsTest {
-    private static PGSimpleDataSource dataSource;
+class JdbcSessionsTest {
+    private static DriverManagerDataSource dataSource;
     private static final Subject OWNER = new Subject("users", "tenant-a", "user-42");
-    private PostgresSessions sessions;
+    private JdbcSessions sessions;
 
     @BeforeAll static void database() throws Exception {
         dataSource = source();
-        try (Connection connection = dataSource.getConnection(); var statement = connection.createStatement();
-             var schema = PostgresSessions.class.getResourceAsStream("/META-INF/ogiri/schema-postgresql.sql")) {
-            assertNotNull(schema);
-            statement.execute("DROP TABLE IF EXISTS ogiri_sessions");
-            statement.execute(new String(schema.readAllBytes(), StandardCharsets.UTF_8));
-        }
+        sql("DROP TABLE IF EXISTS ogiri_sessions");
+        sql("DROP TABLE IF EXISTS ogiri_subject_locks");
+        String vendor = System.getenv("OGIRI_TEST_DATABASE");
+        if (!java.util.Set.of("postgresql", "mysql").contains(vendor)) throw new IllegalArgumentException("Set OGIRI_TEST_DATABASE");
+        new ResourceDatabasePopulator(new ClassPathResource("META-INF/ogiri/schema-" + vendor + ".sql")).execute(dataSource);
     }
 
-    private static PGSimpleDataSource source() {
-        PGSimpleDataSource source = new PGSimpleDataSource();
-        source.setURL(java.util.Objects.requireNonNull(System.getenv("OGIRI_TEST_JDBC_URL"), "Set OGIRI_TEST_JDBC_URL to a disposable PostgreSQL database"));
-        source.setUser(System.getenv("OGIRI_TEST_JDBC_USER"));
-        source.setPassword(System.getenv("OGIRI_TEST_JDBC_PASSWORD"));
-        source.setConnectTimeout(3);
-        source.setSocketTimeout(10);
-        return source;
+    private static DriverManagerDataSource source() {
+        return new DriverManagerDataSource(java.util.Objects.requireNonNull(System.getenv("OGIRI_TEST_JDBC_URL"), "Disposable database required"),
+                System.getenv("OGIRI_TEST_JDBC_USER"), System.getenv("OGIRI_TEST_JDBC_PASSWORD"));
     }
 
     @BeforeEach void reset() throws Exception {
         sql("TRUNCATE ogiri_sessions");
-        sessions = new PostgresSessions(dataSource);
+        sessions = new JdbcSessions(dataSource);
     }
 
     @Test void issuanceRoundTripsWithoutPersistingOrPrintingTheCredential() throws Exception {
@@ -62,9 +59,15 @@ class PostgresSessionsTest {
     }
 
     @Test void malformedAndNonCanonicalCredentialsNeverBecomeDatabaseLookups() {
-        PGSimpleDataSource unavailable = source();
-        unavailable.setPortNumbers(new int[]{1});
-        var offline = new PostgresSessions(unavailable);
+        var unavailable = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var faultable = new DelegatingDataSource(dataSource) {
+            @Override public Connection getConnection() throws SQLException {
+                if (unavailable.get()) throw new SQLException("controlled unavailable store");
+                return super.getConnection();
+            }
+        };
+        var offline = new JdbcSessions(faultable);
+        unavailable.set(true);
         for (String token : new String[]{"", "og1_", "og1_" + "A".repeat(42), "og1_" + "A".repeat(44), "og1_" + "A".repeat(42) + "B", "og1_" + "!".repeat(43), "Bearer " + "A".repeat(43), "x".repeat(100_000)}) {
             assertTrue(offline.authenticate(token).isEmpty(), "Malformed credential must fail before I/O");
         }
@@ -74,17 +77,29 @@ class PostgresSessionsTest {
 
     @Test void authenticationDoesNotWriteOrSlideExpiryAndExpiredRowsCannotAuthenticate() throws Exception {
         var issued = sessions.issue(OWNER, "browser");
-        String before = scalar("SELECT xmin::text FROM ogiri_sessions");
-        for (int i = 0; i < 5; i++) assertEquals(issued.session(), sessions.authenticate(issued.token()).orElseThrow());
-        assertEquals(before, scalar("SELECT xmin::text FROM ogiri_sessions"), "Read authentication must not create new row versions");
-        sql("UPDATE ogiri_sessions SET created_at = '2000-01-01Z', expires_at = '2000-01-02Z'");
+        String before = scalar("SELECT expires_at FROM ogiri_sessions");
+        var readOnly = new DelegatingDataSource(dataSource) {
+            @Override public Connection getConnection() throws SQLException {
+                Connection actual = super.getConnection();
+                return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("prepareStatement") && !((String) args[0]).stripLeading().startsWith("SELECT"))
+                        throw new AssertionError("Authentication attempted a non-read statement");
+                    try { return method.invoke(actual, args); }
+                    catch (InvocationTargetException failure) { throw failure.getCause(); }
+                });
+            }
+        };
+        var reader = new JdbcSessions(readOnly);
+        for (int i = 0; i < 5; i++) assertEquals(issued.session(), reader.authenticate(issued.token()).orElseThrow());
+        assertEquals(before, scalar("SELECT expires_at FROM ogiri_sessions"), "Read authentication must not create new row versions");
+        sql("UPDATE ogiri_sessions SET created_at = 1, expires_at = 2");
         assertTrue(sessions.authenticate(issued.token()).isEmpty());
         assertTrue(sessions.list(OWNER).isEmpty());
     }
 
     @Test void managementUsesEveryIdentityComponentAndNeverTrustsTheSessionIdAlone() {
         var a = sessions.issue(OWNER, "a");
-        for (Subject foreign : List.of(new Subject("admins", "tenant-a", "user-42"), new Subject("users", "tenant-b", "user-42"), new Subject("users", "Tenant-a", "user-42"), new Subject("users", "tenant-a", "USER-42"), new Subject("users", "tenant-a", "other"), new Subject("users", "", "user-42"))) {
+        for (Subject foreign : List.of(new Subject("admins", "tenant-a", "user-42"), new Subject("users", "tenant-b", "user-42"), new Subject("users", "Tenant-a", "user-42"), new Subject("users", "tenant-a", "USER-42"), new Subject("users", "tenant-a ", "user-42"), new Subject("users", "tenant-a", "other"), new Subject("users", "", "user-42"))) {
             var b = sessions.issue(foreign, "b");
             assertEquals(List.of(b.session()), sessions.list(foreign));
             assertFalse(sessions.revoke(foreign, a.session().id()));
@@ -111,7 +126,7 @@ class PostgresSessionsTest {
     }
 
     @Test void admissionRejectsRatherThanEvictingAndRevocationFreesCapacity() {
-        var limited = new PostgresSessions(dataSource, new SessionPolicy(Duration.ofHours(1), 1));
+        var limited = new JdbcSessions(dataSource, new SessionPolicy(Duration.ofHours(1), 1));
         var first = limited.issue(OWNER, "phone");
         assertThrows(SessionLimitException.class, () -> limited.issue(OWNER, "laptop"));
         assertTrue(limited.authenticate(first.token()).isPresent());
@@ -131,7 +146,7 @@ class PostgresSessionsTest {
                     results.add(workers.submit(() -> {
                         start.await(5, TimeUnit.SECONDS);
                         try {
-                            new PostgresSessions(dataSource, new SessionPolicy(Duration.ofHours(1), 2)).issue(subject, "parallel");
+                            new JdbcSessions(dataSource, new SessionPolicy(Duration.ofHours(1), 2)).issue(subject, "parallel");
                             return true;
                         } catch (SessionLimitException expected) { return false; }
                     }));
@@ -146,13 +161,13 @@ class PostgresSessionsTest {
 
     @Test void cleanupIsBoundedSkipsLockedRowsAndPreservesLiveSessions() throws Exception {
         for (int i = 0; i < 4; i++) sessions.issue(OWNER, "expired");
-        sql("UPDATE ogiri_sessions SET created_at = '2000-01-01Z', expires_at = '2000-01-02Z'");
+        sql("UPDATE ogiri_sessions SET created_at = 1, expires_at = 2");
         var live = sessions.issue(OWNER, "live");
         try (Connection blocker = dataSource.getConnection()) {
             blocker.setAutoCommit(false);
-            try (var statement = blocker.createStatement(); var rows = statement.executeQuery("SELECT id FROM ogiri_sessions WHERE expires_at < now() ORDER BY expires_at, id LIMIT 1 FOR UPDATE")) {
+            try (var statement = blocker.createStatement(); var rows = statement.executeQuery("SELECT id FROM ogiri_sessions WHERE expires_at = 2 ORDER BY expires_at, id LIMIT 1 FOR UPDATE")) {
                 assertTrue(rows.next());
-                UUID locked = rows.getObject(1, UUID.class);
+                UUID locked = UUID.fromString(rows.getString(1));
                 assertEquals(2, sessions.cleanup(2));
                 assertEquals(3, Integer.parseInt(scalar("SELECT count(*) FROM ogiri_sessions")));
                 assertEquals(1, sessions.cleanup(10));
@@ -167,7 +182,7 @@ class PostgresSessionsTest {
     }
 
     @Test void failedCommitRollsBackAndNeverReturnsACredential() {
-        PGSimpleDataSource failing = new PGSimpleDataSource() {
+        DelegatingDataSource failing = new DelegatingDataSource(dataSource) {
             @Override public Connection getConnection() throws SQLException {
                 Connection actual = dataSource.getConnection();
                 return (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class}, (proxy, method, args) -> {
@@ -177,25 +192,28 @@ class PostgresSessionsTest {
                 });
             }
         };
-        assertThrows(SessionStoreException.class, () -> new PostgresSessions(failing).issue(OWNER, "phone"));
+        assertThrows(SessionStoreException.class, () -> new JdbcSessions(failing).issue(OWNER, "phone"));
         assertTrue(sessions.list(OWNER).isEmpty());
         assertTrue(sessions.authenticate(sessions.issue(OWNER, "retry").token()).isPresent());
     }
 
-    @Test void callerOwnedTransactionsAreRejectedForAuthenticationAndMutation() throws Exception {
-        var valid = sessions.issue(OWNER, "existing");
-        PGSimpleDataSource enlisted = new PGSimpleDataSource() {
-            @Override public Connection getConnection() throws SQLException {
-                Connection connection = dataSource.getConnection();
-                connection.setAutoCommit(false);
-                return connection;
-            }
-        };
-        var invalid = new PostgresSessions(enlisted);
-        assertThrows(SessionStoreException.class, () -> invalid.authenticate(valid.token()));
-        assertThrows(SessionStoreException.class, () -> invalid.list(OWNER));
-        assertThrows(SessionStoreException.class, () -> invalid.issue(OWNER, "new"));
-        assertEquals(List.of(valid.session()), sessions.list(OWNER));
+    @Test void springTransactionsDoNotUndoCommittedSessionChangesOrCacheRevocation() {
+        var outer = new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.support.JdbcTransactionManager(dataSource));
+        outer.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        var issued = outer.execute(status -> {
+            jdbc.queryForObject("SELECT count(*) FROM ogiri_sessions", Integer.class);
+            var fresh = sessions.issue(OWNER, "committed independently");
+            assertTrue(sessions.authenticate(fresh.token()).isPresent());
+            assertTrue(sessions.revoke(OWNER, fresh.session().id()));
+            assertTrue(sessions.authenticate(fresh.token()).isEmpty());
+            var survivor = sessions.issue(OWNER, "survives outer rollback");
+            status.setRollbackOnly();
+            return survivor;
+        });
+        assertTrue(sessions.authenticate(issued.token()).isPresent());
+        assertEquals(List.of(issued.session()), sessions.list(OWNER));
     }
 
     @Test void invalidResourceBoundsAreRejected() {

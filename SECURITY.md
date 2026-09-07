@@ -1,35 +1,35 @@
 # Security boundaries
 
-Report vulnerabilities privately through GitHub's private vulnerability reporting for this repository when available. Do not post live credentials or exploit details in a public issue. No response-time or security-certification guarantee is made.
+Use GitHub private vulnerability reporting for this repository. Do not publish live credentials. Automated proof is not security certification.
 
-## What the credential protects
+## Credentials and identity
 
-Ogiri generates 32 random bytes using the JDK's `SecureRandom`, encoded as a canonical `og1_` token. PostgreSQL stores only the token's SHA-256 digest and non-secret metadata. This design relies on 256 bits of generated entropy; it is **not** a password-hashing scheme and must never be reused for human-chosen secrets. A read-only database leak does not directly disclose usable credentials. Database write access, process compromise and a stolen plaintext token remain outside that protection.
+Ogiri generates 256-bit random `og1_` bearer tokens and stores only SHA-256 digests. This is suitable for generated high-entropy secrets, **not passwords**. A read-only database leak does not directly disclose usable tokens. Database writes, process compromise, stolen plaintext tokens and heap dumps remain security-sensitive. There is no server-side token pepper or HMAC key ring.
 
-There is no keyed token-hash secret to distribute or rotate. That removes operational key-ring state, but also removes the separate-server-secret defence against an attacker who can rewrite credential digests. Protect database writes as authentication authority. A bearer token is sufficient to authenticate within the application's accepted identity context.
+The full identity is `(realm, tenantId, stableSubjectId)`. The default Spring adapter supports one realm and immutable usernames; use `OgiriAccounts` for mutable logins, stable IDs or tenants. Both login mapping and request-time loading must validate the complete identity. Client names are untrusted display labels. Session UUIDs are management identifiers, never credentials.
 
-## Application responsibilities
+## HTTP and accounts
 
-Authenticate before calling `issue`. Derive the complete owner from an authenticated principal before listing or revoking devices; never trust an arbitrary request-supplied owner. Validate every realm/tenant/account component in the Spring account loader. Protect management and recovery endpoints, enforce rate limits on sign-in, restrict CORS, configure CSRF for any ambient browser credentials, and use HTTPS. The example's JSON/custom-header sign-in exemption is valid only with its restricted-origin assumptions; it is not a universal CSRF policy.
+The starter uses Spring Security's native bearer pipeline. It rejects duplicate Authorization fields and does not accept query/form bearer tokens. The default chain is supplied only when the application defines no chain. Existing applications opt into the helper per chain. It does not disable CSRF globally, replace authorization, create users or relax CORS.
 
-Use stable account IDs. The adapter checks disabled, locked, account-expired and credentials-expired states at every request, after validating the token. It does not persist account-state changes or erase sessions during an authentication read. Re-enabling an account can therefore make its still-live sessions usable again unless the application explicitly revoked them. Password resets, compromise recovery, account deletion and permanent bans must revoke sessions in the application's identity workflow. Coordinate concurrent sign-in/recovery according to that workflow; Ogiri is not an atomic account-and-session transaction manager.
+Built-in sign-in requires JSON plus `X-Requested-With: Ogiri` for its CSRF exemption. The header is not a secret: it prevents browser-simple cross-origin submission only when CORS is restricted. Use HTTPS and application/gateway rate limiting. Existing cookie, Basic and other ambient authentication still require the application's CSRF policy. Management endpoints require a typed Ogiri session principal and derive ownership from it.
 
-No automatic rotation, refresh-token reuse detection, idle expiry, privilege-step-up or MFA is provided. A stolen token remains usable until its fixed expiry or explicit revocation, subject to current account checks. Choose a lifetime appropriate to the threat model; seven days is a configurable convenience default, not a universal security recommendation. Use a shorter lifetime and re-authentication, or an established identity provider, when stronger lifecycle controls are required.
+Account status and authorities are loaded on each authenticated request after token validation. Re-enabling an account can restore unrevoked, unexpired sessions. Password reset, permanent bans, deletion and compromise recovery must revoke sessions and coordinate concurrent sign-in in the identity workflow. Ogiri cannot atomically update application account state that it does not own. Default seven-day lifetime and ten sessions are configurable convenience defaults, not universal threat-model recommendations.
 
-## Storage and failure behaviour
+No automatic refresh, rotation, idle timeout, replay-detection or MFA workflow is provided. Stolen tokens remain usable until expiry/revocation subject to account status. The application must choose an appropriate lifetime and re-authentication policy.
 
-Only use a normal PostgreSQL connection pool, not a caller-bound transaction proxy. Reads must hit the authoritative primary, not a lagging replica. Already enlisted connections are rejected; each mutation commits independently before a credential or success result is returned. A connection lost during commit can leave the outcome unknown: the library throws and does not return a credential. Such an orphaned record can consume a slot until explicit revocation or expiry. No automatic retry pretends to resolve ambiguous commits.
+## SQL, transactions and availability
 
-Authentication does not write activity timestamps or cache a positive result. Revocation removes the row, so later primary reads cannot resurrect it from a cache. In-flight statements or requests begun before revocation may finish. Expiry is evaluated at statement start; it does not interrupt a statement already executing. Advisory-lock hash collisions can serialize unrelated accounts but do not merge identities: every account-management SQL statement separately compares all three identity columns.
+Use packaged schema templates through your own migrations. MySQL requires InnoDB and exact non-padding identity collation. PostgreSQL and MySQL timestamps use database statement time represented as epoch milliseconds; expiry is checked at the start of authentication's statement. Already authorized requests are not retroactively cancelled.
 
-Pool acquisition and network timeouts are host configuration. SQL statements use a five-second query timeout. Database and account-directory outages fail closed and remain distinguishable from invalid tokens; do not convert availability failures into fabricated successful principals.
+Writes use Spring-managed independent transactions at READ_COMMITTED. Account admission and revoke-all take stable digest-keyed row locks. Lock digest collisions would add contention, not merge authorization, because SQL still checks all identity components. Lock rows must not be removed while writers can use them. They grow per identity with issued sessions; their retention avoids an unsafe lock-removal race.
 
-## Credential handling
+Read operations suspend outer JDBC transactions and query the primary. Do not supply transaction-aware or lagging-replica-routing data sources. An existing outer transaction needs additional connection capacity. Spring handles suspension/resumption, rollback and connection-state restoration; a connection loss during commit can still make the outcome unknown. In that case no credential is returned, but an orphaned row may occupy capacity. Do not blindly retry issuance.
 
-Deliver `IssuedSession.token()` explicitly once and exclude it from logs, analytics, exception messages and default JSON serialization. `IssuedSession.toString()` is redacted, but its string accessor is deliberately sensitive. `Session` and the adapter's principal contain no token or digest. Java strings and Spring's native bearer authentication may retain credential bytes in memory; no complete memory-erasure guarantee is claimed. Treat heap dumps as secrets.
+No authentication-positive cache exists. Storage/directory outages fail closed and remain distinct from invalid credentials. SQL timeout is five seconds; configure pool acquisition/socket timeouts, TLS and gateway limits separately. Cleanup skips locked expired rows and never determines whether an expired token is accepted.
 
-Never send tokens in URLs or user-controlled client labels. Use secure client storage appropriate to the application. Browser HttpOnly session cookies require a different transport and CSRF arrangement; prefer Spring Session for that use case rather than embedding this bearer token in an ad hoc cookie wrapper.
+## Secret handling and proof
 
-## Verification limits
+`IssuedSession` and login-request string rendering are redacted. The token accessor is deliberately sensitive; never log/serialize it, put it in URLs, or send it to analytics. JSON endpoints return only metadata with no-store responses. Spring/JDK strings can retain credentials in memory; no memory-erasure guarantee is claimed.
 
-PostgreSQL behavioural tests, native HTTP consumer tests, static analysis and selected mutation probes are evidence, not proof of all interleavings, production performance or penetration-test coverage. Independent security review is still appropriate before production adoption.
+Tests use disposable databases and destructive fixture setup. Functional tests, selected mutation probes, CodeQL, resolved-dependency scanning and local benchmarks cover different boundaries. No one signal proves absence of vulnerabilities, every possible race, or production capacity. Human review is still appropriate before production adoption.

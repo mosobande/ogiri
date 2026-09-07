@@ -1,24 +1,38 @@
 # Contributing
 
-Use Java 17 or newer, Maven 3.9+, and a disposable PostgreSQL database. Tests deliberately fail rather than skip when the database is missing. They drop and recreate `ogiri_sessions`; **never point them at a development database containing valuable data or at production**.
+Use Java 17+, Maven 3.9+ and a **disposable** PostgreSQL or MySQL database. Tests drop/recreate `ogiri_sessions` and `ogiri_subject_locks`. Never use a valuable development or production database.
 
 ```sh
-docker run --rm --name ogiri-test -e POSTGRES_USER=ogiri -e POSTGRES_PASSWORD=ogiri   -e POSTGRES_DB=ogiri_test -p 127.0.0.1:5432:5432 -d postgres:16
+export OGIRI_TEST_DATABASE=postgresql # or mysql
 export OGIRI_TEST_JDBC_URL=jdbc:postgresql://localhost:5432/ogiri_test
 export OGIRI_TEST_JDBC_USER=ogiri
 export OGIRI_TEST_JDBC_PASSWORD=ogiri
 mvn --batch-mode --no-transfer-progress clean install
 mvn --batch-mode --no-transfer-progress -f examples/spring-app/pom.xml verify
+# MySQL consumer: add -Pmysql; use jdbc:mysql://localhost:3306/ogiri_test
 ```
 
-The root build tests and installs the two code artifacts and their parent POM locally. The separate consumer verifies the installed dependency graph and real HTTP behaviour. CI also extracts and applies the exact SQL template from the built JAR before the consumer test. No Maven Central deployment is part of `install` or CI.
+The library suites apply packaged schemas using Spring's ResourceDatabasePopulator. The independent example consumes installed Maven artifacts, not reactor sources. CI runs each database in isolation; never run suites concurrently against the same schema.
 
-## Test admission
+Each test needs a material contract, stable seam, independent oracle, plausible wrong implementation and coverage gap. Preserve real SQL/concurrency tests. Do not add getter tests, private call-order mocks, sleeps-as-clocks or coverage quotas. Mock external faults only when real failures cannot be induced reliably. A smaller implementation that transfers shared security work to every consumer is not a simplification.
 
-Every retained test must protect a material public contract, use an independent outcome oracle and name a plausible wrong implementation it would reject. Prefer the real PostgreSQL behaviour for transaction, lock, expiry and SQL claims. Test doubles are appropriate for an external fault that cannot be reliably induced otherwise, such as a controlled pre-commit failure or account-directory outage; they are not replacement stores.
+Keep ordinary guidance here, in README/Javadoc or SECURITY. Reports/temporary mutation evidence belong in CI/PR artifacts, not a permanent audit archive. Make coherent logical commits and non-force pushes.
 
-Do not add record-getter tests, mock call-order checks, assertions on private helpers, blanket coverage quotas, sleeps as clocks, or tests that restate implementation text. Reuse stronger existing coverage. Remove construction-history tests once a stronger public scenario subsumes them. A green suite is not sufficient evidence: challenge security predicates and resource boundaries with a focused mutation or negative control when practical.
+## Performance and dependencies
 
-## Changes
+After tests create the disposable schema, run the storage benchmark explicitly:
 
-Keep account policy in the application, session invariants in the core and framework transport in Spring Security. A new module, configuration switch, dependency, provider interface or persistent state field needs a concrete current consumer. Update the owning README/Javadoc/security section rather than adding an audit-report archive. Make coherent logical commits and non-force pushes; do not edit version tags or applied application migrations.
+```sh
+mvn -pl ogiri org.codehaus.mojo:exec-maven-plugin:3.5.0:java   -Dexec.mainClass=com.quantipixels.ogiri.JdbcSessionsBenchmark -Dexec.classpathScope=test
+```
+
+It seeds 10,000 rows, warms the path, then measures one and eight concurrent readers through Hikari. Output is `ogiri/target/benchmark-<database>.json`. This measures local storage authentication, not password login, account-directory latency, HTTP or production capacity. It has no pass/fail latency threshold. It uses the disposable test variables and removes only its benchmark realm's rows.
+
+Generate a resolved runtime SBOM for scanning with the official OSV scanner:
+
+```sh
+mvn org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false
+osv-scanner scan source --sbom=target/bom.json
+```
+
+Do not suppress a vulnerability to make CI green. Distinguish database errors/unavailable advisory services from a completed clean scan. New database claims require the same behavioural tests, not H2 compatibility mode.

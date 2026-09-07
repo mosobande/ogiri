@@ -23,13 +23,14 @@ final class Tokens {
     static byte[] digest(String token) {
         if (token == null || token.length() != 47 || !token.startsWith("og1_")) return null;
         String encoded = token.substring(4);
-        if (!encoded.matches("[A-Za-z0-9_-]{43}")) return null;
-        byte[] bytes = Base64.getUrlDecoder().decode(encoded);
+        final byte[] bytes;
+        try { bytes = Base64.getUrlDecoder().decode(encoded); }
+        catch (IllegalArgumentException malformed) { return null; }
         if (bytes.length != 32 || !ENCODER.encodeToString(bytes).equals(encoded)) return null;
         return sha256().digest(token.getBytes(StandardCharsets.US_ASCII));
     }
 
-    static long lockKey(Subject subject) {
+    static byte[] lockKey(Subject subject) {
         MessageDigest hash = sha256();
         hash.update("ogiri-session-admission-v1".getBytes(StandardCharsets.US_ASCII));
         for (String part : new String[]{subject.realm(), subject.tenantId(), subject.subjectId()}) {
@@ -37,7 +38,7 @@ final class Tokens {
             hash.update(ByteBuffer.allocate(4).putInt(bytes.length).array());
             hash.update(bytes);
         }
-        return ByteBuffer.wrap(hash.digest()).getLong();
+        return hash.digest();
     }
 
     private static MessageDigest sha256() {

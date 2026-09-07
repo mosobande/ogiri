@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Quanti Pixels
 package com.quantipixels.ogiri.spring;
 
-import com.quantipixels.ogiri.PostgresSessions;
+import com.quantipixels.ogiri.JdbcSessions;
 import com.quantipixels.ogiri.Session;
 import com.quantipixels.ogiri.SessionStoreException;
 import com.quantipixels.ogiri.Subject;
@@ -26,11 +26,11 @@ import org.springframework.security.oauth2.server.resource.introspection.OpaqueT
  * The returned principal contains metadata, never the credential or stored digest.
  */
 public final class OgiriOpaqueTokenIntrospector implements OpaqueTokenIntrospector {
-    private final PostgresSessions sessions;
+    private final JdbcSessions sessions;
     private final Function<Subject, UserDetails> accounts;
     private final AccountStatusUserDetailsChecker status = new AccountStatusUserDetailsChecker();
 
-    public OgiriOpaqueTokenIntrospector(PostgresSessions sessions, Function<Subject, UserDetails> accounts) {
+    public OgiriOpaqueTokenIntrospector(JdbcSessions sessions, Function<Subject, UserDetails> accounts) {
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.accounts = Objects.requireNonNull(accounts, "accounts");
     }
@@ -54,6 +54,6 @@ public final class OgiriOpaqueTokenIntrospector implements OpaqueTokenIntrospect
                 "realm", session.subject().realm(),
                 "tenant_id", session.subject().tenantId(),
                 "session_id", session.id().toString(),
-                "client", session.client()), java.util.List.copyOf(account.getAuthorities()));
+                "client", session.client(), "ogiri_session", session), java.util.List.copyOf(account.getAuthorities()));
     }
 }

@@ -5,22 +5,22 @@
   <version>0.1.0</version>
   <packaging>pom</packaging>
   <name>Ogiri</name>
-  <description>Revocable opaque sessions for PostgreSQL, with optional Spring Security integration.</description>
+  <description>Spring Boot opaque sessions backed by PostgreSQL or MySQL.</description>
   <url>https://github.com/quantipixels/ogiri</url>
   <licenses><license><name>Apache License 2.0</name><url>https://www.apache.org/licenses/LICENSE-2.0</url></license></licenses>
   <developers><developer><id>quantipixels</id><name>Quanti Pixels</name></developer></developers>
   <scm><url>https://github.com/quantipixels/ogiri</url><connection>scm:git:https://github.com/quantipixels/ogiri.git</connection></scm>
-  <modules><module>ogiri</module><module>ogiri-spring-security</module></modules>
+  <modules><module>ogiri</module><module>ogiri-spring-boot-starter</module></modules>
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.build.outputTimestamp>2026-09-07T00:00:00Z</project.build.outputTimestamp>
-    <spring-security.version>7.1.1</spring-security.version>
+    <spring-boot.version>4.1.1</spring-boot.version>
     <junit.version>6.1.3</junit.version>
     <postgresql.version>42.7.13</postgresql.version>
   </properties>
   <dependencyManagement><dependencies>
-    <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-bom</artifactId><version>${spring-security.version}</version><type>pom</type><scope>import</scope></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-dependencies</artifactId><version>${spring-boot.version}</version><type>pom</type><scope>import</scope></dependency>
     <dependency><groupId>org.junit</groupId><artifactId>junit-bom</artifactId><version>${junit.version}</version><type>pom</type><scope>import</scope></dependency>
     <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>${postgresql.version}</version></dependency>
   </dependencies></dependencyManagement>

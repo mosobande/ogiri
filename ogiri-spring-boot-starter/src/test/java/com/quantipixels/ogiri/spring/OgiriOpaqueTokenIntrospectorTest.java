@@ -7,32 +7,32 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.*;
-import org.postgresql.ds.PGSimpleDataSource;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.oauth2.server.resource.introspection.BadOpaqueTokenException;
 import org.springframework.security.oauth2.server.resource.introspection.OAuth2IntrospectionException;
 
 class OgiriOpaqueTokenIntrospectorTest {
-    private static PGSimpleDataSource dataSource;
-    private PostgresSessions sessions;
+    private static DriverManagerDataSource dataSource;
+    private JdbcSessions sessions;
     private static final Subject OWNER = new Subject("users", "tenant-a", "stable-42");
 
     @BeforeAll static void database() throws Exception {
-        dataSource = new PGSimpleDataSource();
-        dataSource.setURL(java.util.Objects.requireNonNull(System.getenv("OGIRI_TEST_JDBC_URL"), "Disposable PostgreSQL required"));
-        dataSource.setUser(System.getenv("OGIRI_TEST_JDBC_USER"));
-        dataSource.setPassword(System.getenv("OGIRI_TEST_JDBC_PASSWORD"));
-        try (var connection = dataSource.getConnection(); var statement = connection.createStatement();
-             var schema = PostgresSessions.class.getResourceAsStream("/META-INF/ogiri/schema-postgresql.sql")) {
+        dataSource = new DriverManagerDataSource(java.util.Objects.requireNonNull(System.getenv("OGIRI_TEST_JDBC_URL")),
+                System.getenv("OGIRI_TEST_JDBC_USER"), System.getenv("OGIRI_TEST_JDBC_PASSWORD"));
+        try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
             statement.execute("DROP TABLE IF EXISTS ogiri_sessions");
-            statement.execute(new String(java.util.Objects.requireNonNull(schema).readAllBytes(), StandardCharsets.UTF_8));
+            statement.execute("DROP TABLE IF EXISTS ogiri_subject_locks");
         }
+        new ResourceDatabasePopulator(new ClassPathResource("META-INF/ogiri/schema-" + System.getenv("OGIRI_TEST_DATABASE") + ".sql")).execute(dataSource);
     }
 
     @BeforeEach void reset() throws Exception {
         try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) { statement.execute("TRUNCATE ogiri_sessions"); }
-        sessions = new PostgresSessions(dataSource);
+        sessions = new JdbcSessions(dataSource);
     }
 
     @Test void principalCarriesStableScopedIdentityAndCurrentAuthoritiesButNoSecret() {

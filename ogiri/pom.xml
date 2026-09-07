@@ -2,8 +2,11 @@
   <modelVersion>4.0.0</modelVersion>
   <parent><groupId>com.quantipixels.ogiri</groupId><artifactId>ogiri-parent</artifactId><version>0.1.0</version></parent>
   <artifactId>ogiri</artifactId>
-  <name>Ogiri PostgreSQL sessions</name>
+  <name>Ogiri Spring JDBC sessions</name>
   <dependencies>
+    <dependency><groupId>org.springframework</groupId><artifactId>spring-jdbc</artifactId></dependency>
+    <dependency><groupId>com.mysql</groupId><artifactId>mysql-connector-j</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>com.zaxxer</groupId><artifactId>HikariCP</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
     <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>test</scope></dependency>
   </dependencies>
