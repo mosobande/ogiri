@@ -41,7 +41,7 @@ jobs:
         with:
           ref: d3bcd23411eda70f799e958a7db4299f22ffd816
           fetch-depth: 0
-      - name: Restore the exact locally authored commits
+      - name: Restore the locally authored source and correction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -50,21 +50,32 @@ jobs:
           python - <<'PY'
           import os, subprocess, json, base64, pathlib, hashlib
           parts=['bc9c64028618e7b1799bb3196be47397d5734834','af086e154cf68174c34988dfff18c4719a6f740a','7345e888f417e6b6bb1a99fda41af390a4d113fe','9042bac34156278db43cd5215fc43dff3a796004']
-          def blob(sha):
-              return base64.b64decode(json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))['content'])
-          data=b''.join(blob(sha) for sha in parts)
+          data=b''.join(base64.b64decode(json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))['content']) for sha in parts)
           assert hashlib.sha256(data).hexdigest()=='b2d8e05fad91ef15e03483851a630facb9f8b6835d896659f72ad62fc34c7885'
           path=pathlib.Path(os.environ['RUNNER_TEMP'])/'cache.bundle'
           path.write_bytes(data)
           subprocess.run(['git','fetch',str(path),'HEAD'],check=True)
-          patch=blob('e312fd337a851d7107642ebcc1b4993750529154').replace(b'\n diff --git ', b'\ndiff --git ')
-          assert hashlib.sha256(patch).hexdigest()=='54225b188c0c73db64fe3ef597c1bf949de65b482d302b561c95ebb65a717ae0'
-          (path.parent/'cache-correction.patch').write_bytes(patch)
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git cherry-pick 8b3e28046f660a301b42ce62b3e93a944dd37296
-          git am "$RUNNER_TEMP/cache-correction.patch"
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          for name in ('SessionCacheTest','JdbcSessionsTest'):
+              path=Path('ogiri/src/test/java/com/quantipixels/ogiri')/(name+'.java')
+              text=path.read_text().replace('        manager.setStoreByValue(true);','        manager.setStoreByValue(true);\n        manager.setBeanClassLoader('+name+'.class.getClassLoader());')
+              path.write_text(text)
+          path=Path('SECURITY.md')
+          text=path.read_text().replace('Read operations suspend outer JDBC transactions and query the primary.', 'Database read operations suspend outer JDBC or JPA transactions and query the primary.')
+          text=text.replace('No authentication-positive cache exists. Storage/directory outages fail closed and remain distinct from invalid credentials.', 'With caching disabled (the default), every session validation queries authoritative storage. Storage/directory failures remain distinct from invalid credentials. Opt-in caching changes revocation and database-outage behavior as described below.')
+          path.write_text(text)
+          expected={'SECURITY.md':'6f71245c046cc6b88f3e9b9774969069c97fed95','ogiri/src/test/java/com/quantipixels/ogiri/JdbcSessionsTest.java':'b83cf4d41977c36ae8332b9176f1b9bf3ef91775','ogiri/src/test/java/com/quantipixels/ogiri/SessionCacheTest.java':'8dfaa479c837afd1c07b59f721e3b7dc74d3e145'}
+          for path,sha in expected.items():
+              assert subprocess.check_output(['git','hash-object',path],text=True).strip()==sha, path
+          PY
+          git add SECURITY.md ogiri/src/test/java/com/quantipixels/ogiri/JdbcSessionsTest.java ogiri/src/test/java/com/quantipixels/ogiri/SessionCacheTest.java
+          git commit --author='Olúwaṣèyí <52331341+mosobande@users.noreply.github.com>' -m 'test: exercise serialized session cache values and clarify optional consistency'
           git diff --check
           git rev-parse HEAD > "$RUNNER_TEMP/cache-proof/source-head.txt"
       - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
