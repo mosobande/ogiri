@@ -27,95 +27,68 @@ jobs:
           MYSQL_DATABASE: ogiri_test
         ports: ['3306:3306']
         options: --health-cmd "mysqladmin ping -h 127.0.0.1" --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      OGIRI_TEST_JDBC_USER: ogiri
+      OGIRI_TEST_JDBC_PASSWORD: ogiri
+      PGPASSWORD: ogiri
+      MYSQL_PWD: ogiri
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: build/ogiri-0.1.0
           fetch-depth: 0
-      - name: Restore checksum-verified native source commits
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/proof" "$RUNNER_TEMP/input"
-          python - <<'PY'
-          import os, subprocess, json, base64, pathlib, hashlib, yaml
-          def blob(sha):
-              return json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))['content']
-          # Reuse only the previously reviewed, immutable transport bootstrap.
-          previous=yaml.safe_load(base64.b64decode(blob('bc2dac554a77539f194693fe8a9779c0e5d71bd2')))
-          bootstrap=previous['jobs']['verify']['steps'][1]['run']
-          subprocess.run(['bash','-euo','pipefail','-c',bootstrap],check=True)
-          encoded=''.join(blob('9f33bd9496cd9fe1e7b303014517d22c0a39ce28').split())
-          encoded=encoded.replace('La8+7YRqi','La8+8+7YRqi')
-          candidate=base64.b64decode(encoded)
-          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'input/jpa.bundle'
-          path.write_bytes(candidate)
-          assert hashlib.sha256(candidate).hexdigest()=='9efca67c47b09692cf821f5cb6a3cba4ed62e7578695a2791ab6cd0a222c8a7a'
-          subprocess.run(['git','fetch',str(path),'HEAD'],check=True)
-          subprocess.run(['git','checkout','--detach','38a88fd8b0638ade468ed1e99f8ac5081a72e77b'],check=True)
-          PY
       - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: Test real database contracts and installed Boot consumers
+      - name: Restore native commits and verify source, consumers, release and dependencies
         env:
-          OGIRI_TEST_JDBC_USER: ogiri
-          OGIRI_TEST_JDBC_PASSWORD: ogiri
-          PGPASSWORD: ogiri
-          MYSQL_PWD: ogiri
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          for database in postgresql mysql; do
-            export OGIRI_TEST_DATABASE="$database"
-            mkdir -p "$RUNNER_TEMP/proof/$database"
-            if [ "$database" = postgresql ]; then
-              export OGIRI_TEST_JDBC_URL=jdbc:postgresql://localhost:5432/ogiri_test
-            else
-              export OGIRI_TEST_JDBC_URL='jdbc:mysql://localhost:3306/ogiri_test?allowPublicKeyRetrieval=true&sslMode=DISABLED'
-            fi
-            mvn -B -ntp clean install > "$RUNNER_TEMP/proof/$database/core.log" 2>&1 || { tail -120 "$RUNNER_TEMP/proof/$database/core.log"; exit 1; }
-            if [ "$database" = postgresql ]; then
-              psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1 -c 'DROP TABLE ogiri_sessions, ogiri_subject_locks'
-              unzip -p ogiri/target/ogiri-0.1.0.jar META-INF/ogiri/schema-postgresql.sql | psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1
-            else
-              mysql -h 127.0.0.1 -u ogiri ogiri_test -e 'DROP TABLE ogiri_sessions, ogiri_subject_locks'
-              unzip -p ogiri/target/ogiri-0.1.0.jar META-INF/ogiri/schema-mysql.sql | mysql -h 127.0.0.1 -u ogiri ogiri_test
-            fi
-            mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml verify > "$RUNNER_TEMP/proof/$database/consumer.log" 2>&1 || { tail -150 "$RUNNER_TEMP/proof/$database/consumer.log"; exit 1; }
-            find . -path '*/target/surefire-reports/TEST-*.xml' -exec cp --parents {} "$RUNNER_TEMP/proof/$database/" \;
-            mvn -B -ntp -pl ogiri org.codehaus.mojo:exec-maven-plugin:3.5.0:java -Dexec.mainClass=com.quantipixels.ogiri.JdbcSessionsBenchmark -Dexec.classpathScope=test > "$RUNNER_TEMP/proof/$database/benchmark.log" 2>&1 || { tail -100 "$RUNNER_TEMP/proof/$database/benchmark.log"; exit 1; }
-            find . -name 'benchmark-*.json' -exec cp {} "$RUNNER_TEMP/proof/$database/" \;
-          done
-      - name: Rehearse unsigned local Central bundle without upload
-        run: |
-          mvn -B -ntp -Prelease -Dcentral.skipPublishing=true -Dgpg.skip=true -DskipTests deploy > "$RUNNER_TEMP/proof/release.log" 2>&1 || { tail -120 "$RUNNER_TEMP/proof/release.log"; exit 1; }
-          find . -path '*/central-publishing/*' -type f -exec cp --parents {} "$RUNNER_TEMP/proof/" \;
-      - name: Resolve runtime inventories and assess published vulnerabilities
-        run: |
-          set -euo pipefail
-          mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false > "$RUNNER_TEMP/proof/sbom.log" 2>&1
-          cp target/bom.json "$RUNNER_TEMP/proof/library.cdx.json"
-          mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false >> "$RUNNER_TEMP/proof/sbom.log" 2>&1
-          cp examples/spring-app/target/bom.json "$RUNNER_TEMP/proof/consumer.cdx.json"
-          curl --fail --silent --show-error --location https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_amd64 -o "$RUNNER_TEMP/osv-scanner"
-          echo "f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be  $RUNNER_TEMP/osv-scanner" | sha256sum --check
-          chmod +x "$RUNNER_TEMP/osv-scanner"
-          "$RUNNER_TEMP/osv-scanner" scan source --format=json -L "$RUNNER_TEMP/proof/library.cdx.json" -L "$RUNNER_TEMP/proof/consumer.cdx.json" > "$RUNNER_TEMP/proof/vulnerabilities.json" 2> "$RUNNER_TEMP/proof/vulnerabilities.log"
-      - name: Deliver verified native commits without rewriting history
+          mkdir -p "$RUNNER_TEMP/proof"
+          python - <<'PY'
+          import os, subprocess, json, base64, pathlib, yaml
+          def blob(sha):
+              obj=json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))
+              return base64.b64decode(obj['content']).decode()
+          def run(command): subprocess.run(['bash','-euo','pipefail','-c',command],check=True)
+          bootstrap=yaml.safe_load(blob('bc2dac554a77539f194693fe8a9779c0e5d71bd2'))['jobs']['verify']['steps'][1]['run']
+          run(bootstrap)
+          correction=pathlib.Path(os.environ['RUNNER_TEMP'])/'jpa-correction.py'
+          correction.write_text(blob('5449ea4c3f30452d16d68b2679fa7f18b664bbf8'))
+          subprocess.run(['python',str(correction)],check=True)
+          p=pathlib.Path('ogiri-spring-boot-starter/src/main/java/com/quantipixels/ogiri/spring/OgiriAutoConfiguration.java')
+          s=p.read_text().replace('        beforeName = {"org.springframework.boot.security.autoconfigure.servlet.SecurityAutoConfiguration",\n                "org.springframework.boot.security.oauth2.server.resource.autoconfigure.servlet.OAuth2ResourceServerAutoConfiguration"})','        before = {org.springframework.boot.security.autoconfigure.web.servlet.ServletWebSecurityAutoConfiguration.class,\n                org.springframework.boot.security.oauth2.server.resource.autoconfigure.OAuth2ResourceServerAutoConfiguration.class,\n                org.springframework.boot.security.oauth2.server.resource.autoconfigure.web.OAuth2ResourceServerWebSecurityAutoConfiguration.class})')
+          p.write_text(s)
+          run('git add -A')
+          assert subprocess.check_output(['git','write-tree']).decode().strip()=='f5c0373403d6d2efb70c8642e34e8653d8ac392e'
+          env={**os.environ,'GIT_AUTHOR_NAME':'OpenAI','GIT_AUTHOR_EMAIL':'agent@openai.com','GIT_COMMITTER_NAME':'OpenAI','GIT_COMMITTER_EMAIL':'agent@openai.com','GIT_AUTHOR_DATE':'2026-09-07T08:50:11Z','GIT_COMMITTER_DATE':'2026-09-07T08:50:11Z'}
+          subprocess.run(['git','commit','-m','fix: order the starter before Spring Boot servlet security defaults'],env=env,check=True)
+          assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()=='b1d5b9d11890ab48d52ba2c32bd5af2cddebb6bf'
+          # These immutable commands are the reviewed database, release and OSV checks.
+          checks=yaml.safe_load(blob('7ae0248bfb362913a789b2467d5ee1bff50e5954'))['jobs']['verify']['steps'][3:6]
+          for step in checks:
+              print(step['name'],flush=True)
+              run(step['run'])
+          PY
+      - name: Deliver the verified native source commits
         run: |
           test -z "$(git status --porcelain)"
           test "$(git ls-remote origin refs/heads/build/ogiri-0.1.0 | cut -f1)" = 3a763b8305c7fdb41f5ded3779248ec7f28f4240
           git push origin HEAD:refs/heads/build/ogiri-0.1.0
-          git rev-parse HEAD
+      - name: Preserve exact candidate and logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/proof"
+          git rev-parse HEAD > "$RUNNER_TEMP/proof/source-head.txt"
+          git bundle create "$RUNNER_TEMP/proof/candidate.bundle" ori..HEAD || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: boot-proof
           path: |
             ${{ runner.temp }}/proof
-            ${{ runner.temp }}/input/jpa.bundle
             **/target/surefire-reports/TEST-*.xml
             ogiri/target/*.jar
             ogiri-spring-boot-starter/target/*.jar
