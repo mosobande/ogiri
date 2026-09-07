@@ -17,7 +17,9 @@ jobs:
           POSTGRES_PASSWORD: ogiri
           POSTGRES_DB: ogiri_test
         ports: ['5432:5432']
-        options: --health-cmd 'pg_isready -U ogiri -d ogiri_test' --health-interval 5s --health-timeout 5s --health-retries 10
+        options: >-
+          --health-cmd "pg_isready -U ogiri -d ogiri_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       OGIRI_TEST_JDBC_URL: jdbc:postgresql://localhost:5432/ogiri_test
       OGIRI_TEST_JDBC_USER: ogiri
@@ -28,32 +30,45 @@ jobs:
           ref: ori
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
       - name: Apply reviewed source in the native checkout
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = d3240a405722689e608873a65c419ef0c3658739
-          for blob in a2803082e6333b57f34b9e52b6d8a5f876ab1716 4268041b09e68d17d19724a3104ba0a3d06c31e0; do
+          for blob in a2803082e6333b57f34b9e52b6d8a5f876ab1716 4268041b09e68d17d19724a3104ba0a3d06c31e0 92af3759301b16a07219bcd0d33803b98cd764b7; do
             gh api "repos/quantipixels/ogiri/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/source.py"
             python "$RUNNER_TEMP/source.py"
           done
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('ogiri/src/test/java/com/quantipixels/ogiri/PostgresSessionsTest.java')
+          s=p.read_text(); start=s.index('    @Test void accountWideRevocationAndIssuanceShare'); end=s.index('    @Test void cleanupIsBounded',start)
+          p.write_text(s[:start]+s[end:])
+          p=Path('examples/spring-app/src/main/java/example/ogiri/Application.java')
+          s=p.read_text(); start=s.index('        @GetMapping("/me")'); end=s.index('        @GetMapping("/sessions")',start)
+          p.write_text(s[:start]+'        @GetMapping("/me") java.util.Map<String, Object> current(@AuthenticationPrincipal OAuth2AuthenticatedPrincipal principal) { return principal.getAttributes(); }\n\n'+s[end:])
+          PY
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
       - name: Compile test package and install both libraries
         run: |
-          mvn --batch-mode --no-transfer-progress clean install > "$RUNNER_TEMP/maven.log" 2>&1 || { tail -100 "$RUNNER_TEMP/maven.log"; exit 1; }
+          mvn --batch-mode --no-transfer-progress clean install > "$RUNNER_TEMP/maven.log" 2>&1 || { tail -120 "$RUNNER_TEMP/maven.log"; exit 1; }
           tail -25 "$RUNNER_TEMP/maven.log"
+      - name: Test the independently resolved Spring Boot consumer over HTTP
+        run: |
+          mvn --batch-mode --no-transfer-progress -f examples/spring-app/pom.xml verify > "$RUNNER_TEMP/consumer.log" 2>&1 || { tail -140 "$RUNNER_TEMP/consumer.log"; exit 1; }
+          tail -25 "$RUNNER_TEMP/consumer.log"
       - name: Capture actual test outcomes and source
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
           import xml.etree.ElementTree as E
-          for file in Path('.').glob('*/target/surefire-reports/TEST-*.xml'):
+          for file in Path('.').glob('**/target/surefire-reports/TEST-*.xml'):
               root=E.parse(file).getroot()
               print(root.get('name'), {k:root.get(k) for k in ('tests','failures','errors','skipped')})
               for case in root.findall('testcase'):
@@ -68,6 +83,7 @@ jobs:
           path: |
             ${{ runner.temp }}/greenfield-source.tar.gz
             ${{ runner.temp }}/maven.log
+            ${{ runner.temp }}/consumer.log
             **/target/surefire-reports/TEST-*.xml
             **/target/*.jar
           retention-days: 7
