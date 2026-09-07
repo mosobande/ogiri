@@ -230,6 +230,7 @@ class JdbcSessionsTest {
     @Test void cachedReadersAvoidDatabaseIoAndSharedEvictionTargetsOnlyRevokedSessions() {
         var manager = new org.springframework.cache.concurrent.ConcurrentMapCacheManager("shared");
         manager.setStoreByValue(true);
+        manager.setBeanClassLoader(JdbcSessionsTest.class.getClassLoader());
         var region = java.util.Objects.requireNonNull(manager.getCache("shared"));
         var offline = new java.util.concurrent.atomic.AtomicBoolean(false);
         var source = new DelegatingDataSource(dataSource) {

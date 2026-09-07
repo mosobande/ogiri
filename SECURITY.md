@@ -24,9 +24,9 @@ Use packaged schema templates through your own migrations. MySQL requires InnoDB
 
 Writes use Spring-managed independent transactions at READ_COMMITTED. Account admission and revoke-all take stable digest-keyed row locks. Lock digest collisions would add contention, not merge authorization, because SQL still checks all identity components. Lock rows must not be removed while writers can use them. They grow per identity with issued sessions; their retention avoids an unsafe lock-removal race.
 
-Read operations suspend outer JDBC transactions and query the primary. Do not supply transaction-aware or lagging-replica-routing data sources. An existing outer transaction needs additional connection capacity. Spring handles suspension/resumption, rollback and connection-state restoration; a connection loss during commit can still make the outcome unknown. In that case no credential is returned, but an orphaned row may occupy capacity. Do not blindly retry issuance.
+Database read operations suspend outer JDBC or JPA transactions and query the primary. Do not supply transaction-aware or lagging-replica-routing data sources. An existing outer transaction needs additional connection capacity. Spring handles suspension/resumption, rollback and connection-state restoration; a connection loss during commit can still make the outcome unknown. In that case no credential is returned, but an orphaned row may occupy capacity. Do not blindly retry issuance.
 
-No authentication-positive cache exists. Storage/directory outages fail closed and remain distinct from invalid credentials. SQL timeout is five seconds; configure pool acquisition/socket timeouts, TLS and gateway limits separately. Cleanup skips locked expired rows and never determines whether an expired token is accepted.
+With caching disabled (the default), every session validation queries authoritative storage. Storage/directory failures remain distinct from invalid credentials. Opt-in caching changes revocation and database-outage behavior as described below. SQL timeout is five seconds; configure pool acquisition/socket timeouts, TLS and gateway limits separately. Cleanup skips locked expired rows and never determines whether an expired token is accepted.
 
 ## Secret handling and proof
 

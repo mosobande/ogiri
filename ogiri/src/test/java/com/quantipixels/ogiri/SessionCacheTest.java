@@ -110,6 +110,7 @@ class SessionCacheTest {
     @Test void serializedCachePayloadRoundTripsWithoutStoringTheBearerCredential() {
         var manager = new ConcurrentMapCacheManager("shared");
         manager.setStoreByValue(true);
+        manager.setBeanClassLoader(SessionCacheTest.class.getClassLoader());
         var region = Objects.requireNonNull(manager.getCache("shared"));
         var clock = new MutableClock(START);
         var first = new SessionCache(region, Duration.ofSeconds(5), clock);
