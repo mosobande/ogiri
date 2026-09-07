@@ -1,0 +1,23 @@
+name: Temporary Boot workspace
+on:
+  push:
+    branches: [build/ogiri-execution]
+    paths: [.github/workflows/boot-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: build/ogiri-0.1.0
+          fetch-depth: 0
+          persist-credentials: false
+      - run: git bundle create "$RUNNER_TEMP/ogiri.bundle" --all
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ogiri-boot-checkout
+          path: ${{ runner.temp }}/ogiri.bundle
+          retention-days: 1
