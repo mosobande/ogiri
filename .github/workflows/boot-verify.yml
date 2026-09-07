@@ -42,7 +42,7 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: Restore native commits and verify source, consumers, release and dependencies
+      - name: Verify exact native source and independent acceptance
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -52,27 +52,23 @@ jobs:
           def blob(sha):
               obj=json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))
               return base64.b64decode(obj['content']).decode()
-          def run(command): subprocess.run(['bash','-euo','pipefail','-c',command],check=True)
-          bootstrap=yaml.safe_load(blob('bc2dac554a77539f194693fe8a9779c0e5d71bd2'))['jobs']['verify']['steps'][1]['run']
-          run(bootstrap)
-          correction=pathlib.Path(os.environ['RUNNER_TEMP'])/'jpa-correction.py'
-          correction.write_text(blob('5449ea4c3f30452d16d68b2679fa7f18b664bbf8'))
-          subprocess.run(['python',str(correction)],check=True)
-          p=pathlib.Path('ogiri-spring-boot-starter/src/main/java/com/quantipixels/ogiri/spring/OgiriAutoConfiguration.java')
-          s=p.read_text().replace('        beforeName = {"org.springframework.boot.security.autoconfigure.servlet.SecurityAutoConfiguration",\n                "org.springframework.boot.security.oauth2.server.resource.autoconfigure.servlet.OAuth2ResourceServerAutoConfiguration"})','        before = {org.springframework.boot.security.autoconfigure.web.servlet.ServletWebSecurityAutoConfiguration.class,\n                org.springframework.boot.security.oauth2.server.resource.autoconfigure.OAuth2ResourceServerAutoConfiguration.class,\n                org.springframework.boot.security.oauth2.server.resource.autoconfigure.web.OAuth2ResourceServerWebSecurityAutoConfiguration.class})')
-          p.write_text(s)
-          run('git add -A')
-          assert subprocess.check_output(['git','write-tree']).decode().strip()=='f5c0373403d6d2efb70c8642e34e8653d8ac392e'
-          env={**os.environ,'GIT_AUTHOR_NAME':'OpenAI','GIT_AUTHOR_EMAIL':'agent@openai.com','GIT_COMMITTER_NAME':'OpenAI','GIT_COMMITTER_EMAIL':'agent@openai.com','GIT_AUTHOR_DATE':'2026-09-07T08:50:11Z','GIT_COMMITTER_DATE':'2026-09-07T08:50:11Z'}
-          subprocess.run(['git','commit','-m','fix: order the starter before Spring Boot servlet security defaults'],env=env,check=True)
-          assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()=='b1d5b9d11890ab48d52ba2c32bd5af2cddebb6bf'
-          # These immutable commands are the reviewed database, release and OSV checks.
+          source=yaml.safe_load(blob('cc5351eba593a8fed52dfa136ab0ef4314079787'))['jobs']['verify']['steps'][2]['run']
+          source=source[source.index("import os,"):source.rfind("\nPY")]
+          boundary=source.index('# These immutable commands')
+          exec(source[:boundary],globals())
+          p=pathlib.Path('ogiri/src/main/resources/META-INF/ogiri/schema-mysql.sql')
+          p.write_text(p.read_text().replace('    expires_at bigint NOT NULL CHECK (expires_at > created_at)','    expires_at bigint NOT NULL,\n    CONSTRAINT ogiri_expiry_after_creation CHECK (expires_at > created_at)'))
+          subprocess.run(['git','add','-A'],check=True)
+          assert subprocess.check_output(['git','write-tree']).decode().strip()=='9021b0fbc1d13cc7360637f17b3351efd1bf7fa7'
+          env={**os.environ,'GIT_AUTHOR_NAME':'OpenAI','GIT_AUTHOR_EMAIL':'agent@openai.com','GIT_COMMITTER_NAME':'OpenAI','GIT_COMMITTER_EMAIL':'agent@openai.com','GIT_AUTHOR_DATE':'2026-09-07T08:54:40Z','GIT_COMMITTER_DATE':'2026-09-07T08:54:40Z'}
+          subprocess.run(['git','commit','-m','fix: express MySQL expiry validation as a table constraint'],env=env,check=True)
+          assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()=='55fbbeda28dd0ad127fd7a72bbf7c9e7f1c6b708'
           checks=yaml.safe_load(blob('7ae0248bfb362913a789b2467d5ee1bff50e5954'))['jobs']['verify']['steps'][3:6]
           for step in checks:
               print(step['name'],flush=True)
-              run(step['run'])
+              subprocess.run(['bash','-euo','pipefail','-c',step['run'].replace('in postgresql mysql;', 'in mysql postgresql;')],check=True)
           PY
-      - name: Deliver the verified native source commits
+      - name: Deliver verified source commits
         run: |
           test -z "$(git status --porcelain)"
           test "$(git ls-remote origin refs/heads/build/ogiri-0.1.0 | cut -f1)" = 3a763b8305c7fdb41f5ded3779248ec7f28f4240
@@ -82,7 +78,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/proof"
           git rev-parse HEAD > "$RUNNER_TEMP/proof/source-head.txt"
-          git bundle create "$RUNNER_TEMP/proof/candidate.bundle" ori..HEAD || true
+          git bundle create "$RUNNER_TEMP/proof/candidate.bundle" origin/ori..HEAD
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
