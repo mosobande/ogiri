@@ -76,6 +76,10 @@ SecurityFilterChain security(HttpSecurity http, OgiriSecurity ogiri) throws Exce
 
 Retain your existing request matchers, other authentication methods, error-dispatch handling and CSRF policy. Add the sign-in permit/exemption only when you use the built-in login. The helper is reusable across multiple chains; it is not a mutable singleton configurer. `ogiri.endpoints-enabled=false` removes the controller, and `ogiri.enabled=false` disables all Ogiri auto-configuration. Business authorization remains yours. Built-in management accepts an Ogiri session, not an unrelated Basic/JWT principal.
 
+## Runtime patch level
+
+The tested Boot 4.1.1 consumer pins `tomcat.version=11.0.25` for CVE-2026-65905, CVE-2026-65182 and CVE-2026-68525. Your application's dependency management takes precedence over transitive versions: keep embedded Tomcat at 11.0.25 or a later compatible patched release. Remove this temporary override after upgrading to a Boot BOM that supplies the fixes. CI scans both resolved runtime graphs.
+
 ## Database ownership
 
 Copy `META-INF/ogiri/schema-postgresql.sql` or `META-INF/ogiri/schema-mysql.sql` from the core JAR into an application-owned migration. Ogiri never reserves a Flyway version, runs DDL at startup, or modifies application tables. Spring Boot SQL initialization may be used explicitly in disposable development databases. Production migrations are application-owned.
