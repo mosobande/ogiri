@@ -11,7 +11,8 @@ CREATE TABLE ogiri_sessions (
     client varchar(255) NOT NULL,
     token_hash varbinary(32) NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
     created_at bigint NOT NULL,
-    expires_at bigint NOT NULL CHECK (expires_at > created_at)
+    expires_at bigint NOT NULL,
+    CONSTRAINT ogiri_expiry_after_creation CHECK (expires_at > created_at)
 ) ENGINE=InnoDB;
 CREATE INDEX ogiri_sessions_owner ON ogiri_sessions (realm, tenant_id, subject_id, expires_at);
 CREATE INDEX ogiri_sessions_expiry ON ogiri_sessions (expires_at, id);
