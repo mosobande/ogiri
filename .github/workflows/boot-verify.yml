@@ -1,0 +1,45 @@
+name: Verify Boot candidate
+on:
+  push:
+    branches: [build/ogiri-execution]
+    paths: [.github/workflows/boot-verify.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: build/ogiri-0.1.0
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconstruct and validate native checkout transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/input"
+          python - <<'PY'
+          import os, subprocess, json, base64, pathlib, hashlib
+          parts=['24ce2d100df908fc3aef15cbbb074ef5c1c19bbe','1531bbc4c8d1255247290b5d28188040177565e0','d225dfb220c988628b3bd6dffd86b1a0d21a2113','6c06421fc4e69c4e110de0da2570bce2f4f5bb68','99381c4ee0356283a1ef4bc0a7d8fbee3817ffd6','b00bda343f72cd7b98f17db5f78cd7f424779650','03a9d953a851938eaede511b5efdc0f10913fcf3','e70231211d7e44a3099200e445fd9f78a6ca6759','69af60fabee3de27137ab4708e04666d261b4723','027e9a7b2d02c29e77d1af2cca22cdc3ceedfba9','eb53a5b21e6df45de95a36900aa4b5c54579eff4','6e7097b93c6a303b83696f094706d3e1e469d394']
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'input'
+          output=b''
+          for i,sha in enumerate(parts):
+              obj=json.loads(subprocess.check_output(['gh','api','repos/quantipixels/ogiri/git/blobs/'+sha]))
+              text=''.join(obj['content'].split())
+              (root/f'part{i}.b64').write_text(text)
+              data=base64.b64decode(text)
+              (root/f'part{i}.bin').write_bytes(data)
+              output+=data
+          (root/'candidate.bundle').write_bytes(output)
+          actual=hashlib.sha256(output).hexdigest()
+          print('Transport SHA256:',actual)
+          assert actual=='20379c4d43347e02862e0e95c4171c86ea68dd0a7c7d12035765e583a34dd916', 'Transport must match the exact local native commits before execution'
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: boot-input
+          path: ${{ runner.temp }}/input
+          retention-days: 1
