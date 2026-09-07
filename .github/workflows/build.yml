@@ -113,7 +113,8 @@ jobs:
           with ZipFile(f'ogiri-spring-boot-starter/target/ogiri-spring-boot-starter-{version}.jar') as jar:
               metadata=json.loads(jar.read('META-INF/spring-configuration-metadata.json'))
               names={p['name'] for p in metadata['properties']}
-              assert {'ogiri.enabled','ogiri.base-path','ogiri.endpoints-enabled','ogiri.lifetime','ogiri.maximum-sessions','ogiri.realm'} <= names
+              assert {'ogiri.enabled','ogiri.base-path','ogiri.endpoints-enabled','ogiri.lifetime','ogiri.maximum-sessions','ogiri.realm',
+                      'ogiri.cache.enabled','ogiri.cache.name','ogiri.cache.max-age'} <= names
               imports=jar.read('META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports').decode()
               assert 'com.quantipixels.ogiri.spring.OgiriAutoConfiguration' in imports
           Path('target').mkdir(exist_ok=True)
