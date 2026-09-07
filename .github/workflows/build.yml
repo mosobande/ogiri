@@ -1,40 +1,173 @@
 name: Build
-
 on:
-  push:
-    branches: [ori]
   pull_request:
-    branches: [ori]
-
+  push:
+    branches: [ori, build/ogiri-0.1.0]
+  schedule:
+    - cron: '31 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      benchmark:
+        description: Measure local session lookup performance
+        type: boolean
+        default: false
+permissions:
+  contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  build:
+  verify:
+    name: Java ${{ matrix.java }} / ${{ matrix.image }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['17', '25']
+        database: [postgresql, mysql]
+        include:
+          - database: postgresql
+            image: postgres:16
+            port: 5432
+            health: pg_isready -U ogiri -d ogiri_test
+            url: jdbc:postgresql://localhost:5432/ogiri_test?socketTimeout=10
+          - database: mysql
+            image: mysql:8.4
+            port: 3306
+            health: mysqladmin ping -h 127.0.0.1
+            url: jdbc:mysql://localhost:3306/ogiri_test?allowPublicKeyRetrieval=true&sslMode=DISABLED&socketTimeout=10000
+    services:
+      database:
+        image: ${{ matrix.image }}
+        env:
+          POSTGRES_USER: ogiri
+          POSTGRES_PASSWORD: ogiri
+          POSTGRES_DB: ogiri_test
+          MYSQL_ROOT_PASSWORD: root-test-only
+          MYSQL_USER: ogiri
+          MYSQL_PASSWORD: ogiri
+          MYSQL_DATABASE: ogiri_test
+        ports:
+          - ${{ matrix.port }}:${{ matrix.port }}
+        options: >-
+          --health-cmd "${{ matrix.health }}"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      OGIRI_TEST_DATABASE: ${{ matrix.database }}
+      OGIRI_TEST_JDBC_URL: ${{ matrix.url }}
+      OGIRI_TEST_JDBC_USER: ogiri
+      OGIRI_TEST_JDBC_PASSWORD: ogiri
     steps:
-      - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
-          java-version: 17
-          distribution: "temurin"
-          cache: gradle
-
-      - name: Build with Gradle
-        run: ./gradlew clean build -x test --no-daemon
-
-      - name: Upload build artifacts
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Verify and install the library artifacts
+        run: mvn -B -ntp clean install
+      - name: Apply the schema from the built JAR
+        env:
+          PGPASSWORD: ogiri
+          MYSQL_PWD: ogiri
+        run: |
+          set -euo pipefail
+          version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
+          jar="ogiri/target/ogiri-$version.jar"
+          if [ "$OGIRI_TEST_DATABASE" = postgresql ]; then
+            psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1 -c 'DROP TABLE ogiri_sessions, ogiri_subject_locks'
+            unzip -p "$jar" META-INF/ogiri/schema-postgresql.sql | psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1
+          else
+            mysql -h 127.0.0.1 -u ogiri ogiri_test -e 'DROP TABLE ogiri_sessions, ogiri_subject_locks'
+            unzip -p "$jar" META-INF/ogiri/schema-mysql.sql | mysql -h 127.0.0.1 -u ogiri ogiri_test
+          fi
+      - name: Verify independently resolved Boot consumers over HTTP and JPA
+        run: mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml verify
+      - name: Inspect package contents and executed test evidence
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import json, xml.etree.ElementTree as E
+          ns={'m':'http://maven.apache.org/POM/4.0.0'}
+          version=E.parse('pom.xml').find('m:version',ns).text
+          results=[]
+          for module in ('ogiri','ogiri-spring-boot-starter','examples/spring-app'):
+              reports=list(Path(module).glob('target/surefire-reports/TEST-*.xml'))
+              assert reports, module
+              for report in reports:
+                  root=E.parse(report).getroot()
+                  counts={k:int(root.get(k,0)) for k in ('tests','failures','errors','skipped')}
+                  assert counts['tests'] and not any(counts[k] for k in ('failures','errors','skipped')), (module,counts)
+                  results.append({'module':module,'suite':root.get('name'),**counts})
+          for module in ('ogiri','ogiri-spring-boot-starter'):
+              for classifier,suffix in [('sources','.java'),('javadoc','.html')]:
+                  with ZipFile(f'{module}/target/{module}-{version}-{classifier}.jar') as jar:
+                      assert any(n.endswith(suffix) for n in jar.namelist()), module
+          with ZipFile(f'ogiri/target/ogiri-{version}.jar') as jar:
+              for vendor in ('postgresql','mysql'): assert f'META-INF/ogiri/schema-{vendor}.sql' in jar.namelist()
+              assert not any(n.startswith('db/migration/') for n in jar.namelist())
+          with ZipFile(f'ogiri-spring-boot-starter/target/ogiri-spring-boot-starter-{version}.jar') as jar:
+              metadata=json.loads(jar.read('META-INF/spring-configuration-metadata.json'))
+              names={p['name'] for p in metadata['properties']}
+              assert {'ogiri.enabled','ogiri.base-path','ogiri.endpoints-enabled','ogiri.lifetime','ogiri.maximum-sessions','ogiri.realm',
+                      'ogiri.cache.enabled','ogiri.cache.name','ogiri.cache.max-age'} <= names
+              imports=jar.read('META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports').decode()
+              assert 'com.quantipixels.ogiri.spring.OgiriAutoConfiguration' in imports
+          Path('target').mkdir(exist_ok=True)
+          Path('target/verification.json').write_text(json.dumps(results,indent=2)+'\n')
+          print(json.dumps(results,indent=2))
+          PY
+      - name: Optional local session lookup benchmark
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark }}
+        run: >-
+          mvn -B -ntp -pl ogiri org.codehaus.mojo:exec-maven-plugin:3.5.0:java
+          -Dexec.mainClass=com.quantipixels.ogiri.JdbcSessionsBenchmark -Dexec.classpathScope=test
+      - name: Inventory resolved runtime dependencies
+        if: ${{ matrix.java == '17' && matrix.database == 'postgresql' }}
+        run: |
+          mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false
+          mvn -B -ntp -Pmysql -f examples/spring-app/pom.xml org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DincludeTestScope=false
+          cp target/bom.json target/library.cdx.json
+          cp examples/spring-app/target/bom.json target/consumer.cdx.json
+      - name: Check runtime components against OSV
+        if: ${{ matrix.java == '17' && matrix.database == 'postgresql' }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_amd64 -o "$RUNNER_TEMP/osv-scanner"
+          echo "f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be  $RUNNER_TEMP/osv-scanner" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          "$RUNNER_TEMP/osv-scanner" scan source --format=json -L target/library.cdx.json -L target/consumer.cdx.json > target/vulnerabilities.json
+      - name: Rehearse the unsigned local Central bundle
+        if: ${{ matrix.java == '17' && matrix.database == 'postgresql' }}
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -Prelease -Dgpg.skip=true -DskipTests verify \
+            org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy \
+            -DaltDeploymentRepository="rehearsal::file://$PWD/target/release-repository"
+          (cd target/release-repository && zip -qr ../ogiri-unsigned-bundle.zip com -x '*/maven-metadata*')
+          python - <<'PYCODE'
+          from zipfile import ZipFile
+          with ZipFile('target/ogiri-unsigned-bundle.zip') as z:
+              names=z.namelist()
+              assert len([n for n in names if n.endswith('.pom')])==3
+              assert len([n for n in names if n.endswith('.jar')])==6
+              for n in names:
+                  if n.endswith(('.pom','.jar')):
+                      assert n+'.sha1' in names and n+'.md5' in names, n
+          PYCODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: build-artifacts
-          path: "**/build/libs/*.jar"
-          retention-days: 1
+          name: verification-java${{ matrix.java }}-${{ matrix.database }}
+          path: |
+            target/*.json
+            **/target/surefire-reports/TEST-*.xml
+            **/target/benchmark-*.json
+            target/ogiri-unsigned-bundle.zip
+            ogiri/target/*.jar
+            ogiri-spring-boot-starter/target/*.jar
+          retention-days: 7
