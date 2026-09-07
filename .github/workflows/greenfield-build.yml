@@ -36,18 +36,15 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = d3240a405722689e608873a65c419ef0c3658739
-          for blob in a2803082e6333b57f34b9e52b6d8a5f876ab1716 4268041b09e68d17d19724a3104ba0a3d06c31e0 92af3759301b16a07219bcd0d33803b98cd764b7; do
+          for blob in a2803082e6333b57f34b9e52b6d8a5f876ab1716 4268041b09e68d17d19724a3104ba0a3d06c31e0 92af3759301b16a07219bcd0d33803b98cd764b7 0b70445c096005a9e68d526e676662cf50f9c36b; do
             gh api "repos/quantipixels/ogiri/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/source.py"
             python "$RUNNER_TEMP/source.py"
           done
           python - <<'PY'
           from pathlib import Path
-          p=Path('ogiri/src/test/java/com/quantipixels/ogiri/PostgresSessionsTest.java')
-          s=p.read_text(); start=s.index('    @Test void accountWideRevocationAndIssuanceShare'); end=s.index('    @Test void cleanupIsBounded',start)
-          p.write_text(s[:start]+s[end:])
           p=Path('examples/spring-app/src/main/java/example/ogiri/Application.java')
-          s=p.read_text(); start=s.index('        @GetMapping("/me")'); end=s.index('        @GetMapping("/sessions")',start)
-          p.write_text(s[:start]+'        @GetMapping("/me") java.util.Map<String, Object> current(@AuthenticationPrincipal OAuth2AuthenticatedPrincipal principal) { return principal.getAttributes(); }\n\n'+s[end:])
+          s=p.read_text().replace('            catch (AuthenticationException invalid)', '            catch (AuthenticationServiceException unavailable) { throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE); }\n            catch (AuthenticationException invalid)')
+          p.write_text(s)
           PY
       - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
@@ -58,6 +55,13 @@ jobs:
         run: |
           mvn --batch-mode --no-transfer-progress clean install > "$RUNNER_TEMP/maven.log" 2>&1 || { tail -120 "$RUNNER_TEMP/maven.log"; exit 1; }
           tail -25 "$RUNNER_TEMP/maven.log"
+      - name: Apply the schema from the actual installed artifact
+        env:
+          PGPASSWORD: ogiri
+        run: |
+          set -euo pipefail
+          psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1 -c 'DROP TABLE ogiri_sessions'
+          unzip -p ogiri/target/ogiri-0.1.0.jar META-INF/ogiri/schema-postgresql.sql | psql -h localhost -U ogiri -d ogiri_test -v ON_ERROR_STOP=1
       - name: Test the independently resolved Spring Boot consumer over HTTP
         run: |
           mvn --batch-mode --no-transfer-progress -f examples/spring-app/pom.xml verify > "$RUNNER_TEMP/consumer.log" 2>&1 || { tail -140 "$RUNNER_TEMP/consumer.log"; exit 1; }
