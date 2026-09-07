@@ -26,8 +26,9 @@ import org.springframework.security.web.SecurityFilterChain;
         afterName = {"org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
                 "org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration",
                 "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"},
-        beforeName = {"org.springframework.boot.security.autoconfigure.servlet.SecurityAutoConfiguration",
-                "org.springframework.boot.security.oauth2.server.resource.autoconfigure.servlet.OAuth2ResourceServerAutoConfiguration"})
+        before = {org.springframework.boot.security.autoconfigure.web.servlet.ServletWebSecurityAutoConfiguration.class,
+                org.springframework.boot.security.oauth2.server.resource.autoconfigure.OAuth2ResourceServerAutoConfiguration.class,
+                org.springframework.boot.security.oauth2.server.resource.autoconfigure.web.OAuth2ResourceServerWebSecurityAutoConfiguration.class})
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnProperty(prefix = "ogiri", name = "enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(OgiriProperties.class)
