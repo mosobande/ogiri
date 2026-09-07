@@ -97,3 +97,5 @@ No refresh/rotation protocol, cookie transport, registration, recovery orchestra
 The [independent example](examples/spring-app) consumes the actual installed artifacts. It exercises both the zero-plumbing default and existing multi-chain applications against both database engines. Production performance is not inferred from line counts; the opt-in benchmark measures a defined local storage workload.
 
 Licensed under Apache-2.0.
+
+The starter reuses the application transaction manager, including Spring JPA. With the core alone, pass the manager for the supplied DataSource to `new JdbcSessions(dataSource, policy, transactionManager)`. The two-argument constructor creates a JDBC manager and is intended for JDBC-only transaction contexts. Multiple data sources or managers require an explicitly selected `JdbcSessions` bean; do not select an unrelated manager.

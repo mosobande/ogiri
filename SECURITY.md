@@ -33,3 +33,5 @@ No authentication-positive cache exists. Storage/directory outages fail closed a
 `IssuedSession` and login-request string rendering are redacted. The token accessor is deliberately sensitive; never log/serialize it, put it in URLs, or send it to analytics. JSON endpoints return only metadata with no-store responses. Spring/JDK strings can retain credentials in memory; no memory-erasure guarantee is claimed.
 
 Tests use disposable databases and destructive fixture setup. Functional tests, selected mutation probes, CodeQL, resolved-dependency scanning and local benchmarks cover different boundaries. No one signal proves absence of vulnerabilities, every possible race, or production capacity. Human review is still appropriate before production adoption.
+
+The starter uses the host transaction manager to suspend and resume JDBC or JPA state correctly. Direct core users with JPA must pass the corresponding manager. Session transactions remain independent; they do not make password reset and concurrent sign-in atomic.

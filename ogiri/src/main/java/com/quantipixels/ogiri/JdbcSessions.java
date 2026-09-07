@@ -18,6 +18,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -40,6 +41,11 @@ public final class JdbcSessions {
     public JdbcSessions(DataSource source) { this(source, SessionPolicy.defaults()); }
 
     public JdbcSessions(DataSource source, SessionPolicy policy) {
+        this(source, policy, jdbcTransactions(source));
+    }
+
+    /** Use the application's transaction manager for this DataSource, including JPA-backed hosts. */
+    public JdbcSessions(DataSource source, SessionPolicy policy, PlatformTransactionManager manager) {
         this.policy = Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(source, "source");
         if (source instanceof org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy)
@@ -48,14 +54,19 @@ public final class JdbcSessions {
         this.jdbc = new JdbcTemplate(source);
         this.jdbc.setQueryTimeout(5);
         this.named = new NamedParameterJdbcTemplate(jdbc);
-        var manager = new JdbcTransactionManager(source);
-        manager.setRollbackOnCommitFailure(true);
+        Objects.requireNonNull(manager, "manager");
         this.mutations = new TransactionTemplate(manager);
         mutations.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         mutations.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
         mutations.setTimeout(10);
         this.reads = new TransactionTemplate(manager);
         reads.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
+    }
+
+    private static JdbcTransactionManager jdbcTransactions(DataSource source) {
+        var manager = new JdbcTransactionManager(source);
+        manager.setRollbackOnCommitFailure(true);
+        return manager;
     }
 
     /** Issue only after the caller has authenticated and authorized the full subject. */

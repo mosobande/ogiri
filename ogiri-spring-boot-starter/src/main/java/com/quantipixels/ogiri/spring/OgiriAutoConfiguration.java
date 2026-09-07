@@ -23,7 +23,9 @@ import org.springframework.security.web.SecurityFilterChain;
 
 /** Boot owns discovery, configuration binding, pooling and native Security integration. */
 @AutoConfiguration(
-        afterName = "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+        afterName = {"org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+                "org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration",
+                "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"},
         beforeName = {"org.springframework.boot.security.autoconfigure.servlet.SecurityAutoConfiguration",
                 "org.springframework.boot.security.oauth2.server.resource.autoconfigure.servlet.OAuth2ResourceServerAutoConfiguration"})
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
@@ -37,7 +39,11 @@ public final class OgiriAutoConfiguration {
     }
 
     @Bean @ConditionalOnMissingBean
-    JdbcSessions ogiriSessions(DataSource source, SessionPolicy policy) { return new JdbcSessions(source, policy); }
+    JdbcSessions ogiriSessions(DataSource source, SessionPolicy policy,
+            org.springframework.beans.factory.ObjectProvider<org.springframework.transaction.PlatformTransactionManager> managers) {
+        var manager = managers.getIfAvailable();
+        return manager == null ? new JdbcSessions(source, policy) : new JdbcSessions(source, policy, manager);
+    }
 
     @Bean @ConditionalOnMissingBean
     PasswordEncoder ogiriPasswordEncoder() { return PasswordEncoderFactories.createDelegatingPasswordEncoder(); }
